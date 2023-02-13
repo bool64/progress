@@ -94,12 +94,27 @@ func MetricsStatus(s ProgressStatus) string {
 	return metrics
 }
 
+type Task struct {
+	TotalBytes   func() int64
+	CurrentBytes func() int64
+	CurrentLines func() int64
+	Task         string
+	Continue     bool
+}
+
 // Start spawns background progress reporter.
-func (p *Progress) Start(total, current, lines func() int64, task string) {
+func (p *Progress) Start(options ...func(t *Task)) {
 	p.done = make(chan bool)
-	p.task = task
-	p.current = current
-	p.lines = lines
+
+	task := Task{}
+	for _, o := range options {
+		o(&task)
+	}
+
+	p.task = task.Task
+	p.current = task.CurrentBytes
+	p.lines = task.CurrentLines
+	p.tot = task.TotalBytes
 
 	interval := p.Interval
 	if interval == 0 {
@@ -113,8 +128,10 @@ func (p *Progress) Start(total, current, lines func() int64, task string) {
 		}
 	}
 
-	p.start = time.Now()
-	p.tot = total
+	if !task.Continue || p.start.IsZero() {
+		p.start = time.Now()
+	}
+
 	done := p.done
 	t := time.NewTicker(interval)
 
