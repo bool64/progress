@@ -27,12 +27,12 @@ type Progress struct {
 	ShowHeapStats  bool
 	ShowLinesStats bool
 	done           chan bool
-	lines          int64
 	task           string
+	lines          func() int64
 	current        func() int64
+	tot            func() int64
 	prnt           func(s ProgressStatus)
 	start          time.Time
-	tot            float64
 	metrics        []ProgressMetric
 }
 
@@ -95,11 +95,11 @@ func MetricsStatus(s ProgressStatus) string {
 }
 
 // Start spawns background progress reporter.
-func (p *Progress) Start(total int64, current func() int64, task string) {
+func (p *Progress) Start(total, current, lines func() int64, task string) {
 	p.done = make(chan bool)
-	atomic.StoreInt64(&p.lines, 0)
 	p.task = task
 	p.current = current
+	p.lines = lines
 
 	interval := p.Interval
 	if interval == 0 {
@@ -114,7 +114,7 @@ func (p *Progress) Start(total int64, current func() int64, task string) {
 	}
 
 	p.start = time.Now()
-	p.tot = float64(total)
+	p.tot = total
 	done := p.done
 	t := time.NewTicker(interval)
 
@@ -141,11 +141,11 @@ func (p *Progress) AddMetrics(metrics ...ProgressMetric) {
 func (p *Progress) printStatus(last bool) {
 	s := ProgressStatus{}
 	s.Task = p.task
-	s.LinesCompleted = atomic.LoadInt64(&p.lines)
+	s.LinesCompleted = p.lines()
 	s.Metrics = p.metrics
 
 	b := float64(p.current())
-	s.DonePercent = 100 * b / p.tot
+	s.DonePercent = 100 * b / float64(p.tot())
 	s.Elapsed = time.Since(p.start)
 	s.SpeedMBPS = (b / s.Elapsed.Seconds()) / (1024 * 1024)
 	s.SpeedLPS = float64(s.LinesCompleted) / s.Elapsed.Seconds()
@@ -156,16 +156,6 @@ func (p *Progress) printStatus(last bool) {
 	if s.Remaining > 100*time.Millisecond || last {
 		p.prnt(s)
 	}
-}
-
-// CountLine increments line counter.
-func (p *Progress) CountLine() int64 {
-	return atomic.AddInt64(&p.lines, 1)
-}
-
-// Lines returns number of counted lines.
-func (p *Progress) Lines() int64 {
-	return atomic.LoadInt64(&p.lines)
 }
 
 // Stop stops progress reporting.
@@ -180,6 +170,7 @@ func (p *Progress) Stop() {
 type CountingReader struct {
 	Reader io.Reader
 
+	lines     int64
 	readBytes int64
 }
 
@@ -189,6 +180,12 @@ func (cr *CountingReader) Read(p []byte) (n int, err error) {
 
 	atomic.AddInt64(&cr.readBytes, int64(n))
 
+	for i := 0; i < n; i++ {
+		if p[i] == '\n' {
+			atomic.AddInt64(&cr.lines, 1)
+		}
+	}
+
 	return n, err
 }
 
@@ -197,10 +194,16 @@ func (cr *CountingReader) Bytes() int64 {
 	return atomic.LoadInt64(&cr.readBytes)
 }
 
+// Lines returns number of read lines.
+func (cr *CountingReader) Lines() int64 {
+	return atomic.LoadInt64(&cr.lines)
+}
+
 // CountingWriter wraps io.Writer to count bytes.
 type CountingWriter struct {
 	Writer io.Writer
 
+	lines        int64
 	writtenBytes int64
 }
 
@@ -210,12 +213,23 @@ func (cr *CountingWriter) Write(p []byte) (n int, err error) {
 
 	atomic.AddInt64(&cr.writtenBytes, int64(n))
 
+	for i := 0; i < n; i++ {
+		if p[i] == '\n' {
+			atomic.AddInt64(&cr.lines, 1)
+		}
+	}
+
 	return n, err
 }
 
 // Bytes returns number of written bytes.
 func (cr *CountingWriter) Bytes() int64 {
 	return atomic.LoadInt64(&cr.writtenBytes)
+}
+
+// Lines returns number of written bytes.
+func (cr *CountingWriter) Lines() int64 {
+	return atomic.LoadInt64(&cr.lines)
 }
 
 // MetricsExposer provides metric counters.

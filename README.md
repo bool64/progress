@@ -7,11 +7,37 @@
 ![Code lines](https://sloc.xyz/github/bool64/progress/?category=code)
 ![Comments](https://sloc.xyz/github/bool64/progress/?category=comments)
 
-<!--- TODO Update README.md -->
-
-Project template with GitHub actions for Go.
+This library instruments `io.Reader`/`io.Writer` with progress printer.
 
 ## Usage
 
-Create a new repository from this template, check out it and run `./run_me.sh` to replace template name with name of
-your repository.
+See [`catp`](./cmd/catp/main.go) for an example.
+
+```go
+var pr = &progress.Progress{
+	Interval: 5 * time.Second,
+	Print: func(status progress.ProgressStatus) {
+		println(Status(status))
+	},
+}
+
+func cat(filename string) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	st, err := file.Stat()
+	if err != nil {
+		log.Fatalf("failed to read file stats %s: %s", filename, err)
+	}
+
+	cr := &progress.CountingReader{Reader: file}
+
+	pr.Start(st.Size, cr.Bytes, cr.Lines, filename)
+	defer pr.Stop()
+
+	readFile(cr)
+}
+```
