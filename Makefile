@@ -27,11 +27,14 @@ ifeq ($(DEVGO_PATH),)
 	endif
 endif
 
+
+export CGO_ENABLED ?= 0
 BUILD_PKG = ./cmd/catp
 
 -include $(DEVGO_PATH)/makefiles/main.mk
 -include $(DEVGO_PATH)/makefiles/lint.mk
 -include $(DEVGO_PATH)/makefiles/build.mk
+-include $(DEVGO_PATH)/makefiles/release-assets.mk
 -include $(DEVGO_PATH)/makefiles/reset-ci.mk
 
 # Add your custom targets here.

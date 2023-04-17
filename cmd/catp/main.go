@@ -7,9 +7,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/bool64/progress"
+	"github.com/klauspost/compress/zstd"
+	gzip "github.com/klauspost/pgzip"
+	_ "gitlab.com/rackn/seekable-zstd"
 )
 
 type runner struct {
@@ -58,6 +62,18 @@ func (r *runner) cat(filename string) {
 
 	r.currentFile = &progress.CountingReader{Reader: file}
 	r.currentTotal = r.sizes[filename]
+	rd := io.Reader(r.currentFile)
+
+	switch {
+	case strings.HasSuffix(filename, ".gz"):
+		if rd, err = gzip.NewReader(rd); err != nil {
+			log.Fatalf("failed to init gzip reader: %s", err)
+		}
+	case strings.HasSuffix(filename, ".zst"):
+		if rd, err = zstd.NewReader(rd); err != nil {
+			log.Fatalf("failed to init gzip reader: %s", err)
+		}
+	}
 
 	r.pr.Start(func(t *progress.Task) {
 		t.TotalBytes = func() int64 {
@@ -70,7 +86,7 @@ func (r *runner) cat(filename string) {
 		t.Task = filename
 		t.Continue = true
 	})
-	readFile(r.currentFile)
+	readFile(rd)
 
 	r.pr.Stop()
 	r.readBytes += r.currentFile.Bytes()
