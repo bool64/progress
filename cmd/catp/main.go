@@ -148,7 +148,6 @@ func main() {
 	}
 
 	r := &runner{}
-	r.reverse = *reverse
 
 	if *grep != "" {
 		for _, s := range strings.Split(*grep, "\\|") {
