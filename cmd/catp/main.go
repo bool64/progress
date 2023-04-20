@@ -2,18 +2,19 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"runtime/pprof"
 	"strings"
 	"time"
 
 	"github.com/bool64/progress"
 	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
-	_ "gitlab.com/rackn/seekable-zstd"
 )
 
 type runner struct {
@@ -21,6 +22,9 @@ type runner struct {
 	sizes      map[string]int64
 	readBytes  int64
 	totalBytes int64
+
+	grep    [][]byte
+	reverse bool
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
@@ -44,11 +48,30 @@ func (r *runner) st(s progress.ProgressStatus) string {
 	return res
 }
 
-func readFile(r io.Reader) {
-	rd := bufio.NewReader(r)
+func (r *runner) readFile(rd io.Reader) {
+	b := bufio.NewReaderSize(rd, 64*1024)
 
-	_, err := io.Copy(os.Stdout, rd)
+	_, err := io.Copy(os.Stdout, b)
 	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (r *runner) scanFile(rd io.Reader) {
+	s := bufio.NewScanner(rd)
+	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
+
+	for s.Scan() {
+		for _, g := range r.grep {
+			if bytes.Contains(s.Bytes(), g) {
+				_, _ = os.Stdout.Write(s.Bytes())
+
+				break
+			}
+		}
+	}
+
+	if err := s.Err(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -75,6 +98,10 @@ func (r *runner) cat(filename string) {
 		}
 	}
 
+	if r.reverse {
+
+	}
+
 	r.pr.Start(func(t *progress.Task) {
 		t.TotalBytes = func() int64 {
 			return r.totalBytes
@@ -86,16 +113,49 @@ func (r *runner) cat(filename string) {
 		t.Task = filename
 		t.Continue = true
 	})
-	readFile(rd)
+
+	if len(r.grep) > 0 || r.reverse {
+		r.scanFile(rd)
+	} else {
+		r.readFile(rd)
+	}
 
 	r.pr.Stop()
 	r.readBytes += r.currentFile.Bytes()
 }
 
 func main() {
+	grep := flag.String("grep", "", "grep pattern, may contain multiple patterns separated by \\|")
+	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
+
 	flag.Parse()
 
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile) //nolint:gosec
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if err = pprof.StartCPUProfile(f); err != nil {
+			log.Fatal(err)
+		}
+
+		go func() {
+			time.Sleep(10 * time.Second)
+			pprof.StopCPUProfile()
+			println("CPU profile written to", *cpuProfile)
+		}()
+	}
+
 	r := &runner{}
+	r.reverse = *reverse
+
+	if *grep != "" {
+		for _, s := range strings.Split(*grep, "\\|") {
+			r.grep = append(r.grep, []byte(s))
+		}
+	}
+
 	r.sizes = make(map[string]int64)
 	r.pr = &progress.Progress{
 		Interval: 5 * time.Second,

@@ -30,6 +30,8 @@ endif
 
 export CGO_ENABLED ?= 0
 BUILD_PKG = ./cmd/catp
+BUILD_LDFLAGS=-s -w
+BUILD_FLAGS=-trimpath -pgo=./cmd/catp.pgo
 
 -include $(DEVGO_PATH)/makefiles/main.mk
 -include $(DEVGO_PATH)/makefiles/lint.mk
@@ -39,5 +41,3 @@ BUILD_PKG = ./cmd/catp
 
 # Add your custom targets here.
 
-## Run tests
-test: test-unit
