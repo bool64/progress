@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	//"github.com/klauspost/compress/zstd"
+	"github.com/DataDog/zstd"
+	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
-	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
 )
 
@@ -93,13 +95,13 @@ func (r *runner) cat(filename string) {
 			log.Fatalf("failed to init gzip reader: %s", err)
 		}
 	case strings.HasSuffix(filename, ".zst"):
-		if rd, err = zstd.NewReader(rd); err != nil {
-			log.Fatalf("failed to init gzip reader: %s", err)
-		}
+		rd = zstd.NewReader(rd)
+		//if rd, err = zstd.NewReader(rd); err != nil {
+		//	log.Fatalf("failed to init gzip reader: %s", err)
+		//}
 	}
 
 	if r.reverse {
-
 	}
 
 	r.pr.Start(func(t *progress.Task) {
@@ -127,8 +129,16 @@ func (r *runner) cat(filename string) {
 func main() {
 	grep := flag.String("grep", "", "grep pattern, may contain multiple patterns separated by \\|")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
+	ver := flag.Bool("version", false, "print version and exit")
+	verbosity := flag.Int("verbosity", 1, "progress status verbosity level (0, 1, 2)")
 
 	flag.Parse()
+
+	if *ver {
+		fmt.Println(version.Info().Version)
+
+		return
+	}
 
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile) //nolint:gosec
@@ -159,6 +169,10 @@ func main() {
 	r.pr = &progress.Progress{
 		Interval: 5 * time.Second,
 		Print: func(status progress.ProgressStatus) {
+			if *verbosity == 0 {
+				return
+			}
+
 			println(r.st(status))
 		},
 	}
