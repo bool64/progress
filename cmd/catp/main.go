@@ -12,10 +12,9 @@ import (
 	"strings"
 	"time"
 
-	//"github.com/klauspost/compress/zstd"
-	"github.com/DataDog/zstd"
 	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
+	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
 )
 
@@ -95,10 +94,9 @@ func (r *runner) cat(filename string) {
 			log.Fatalf("failed to init gzip reader: %s", err)
 		}
 	case strings.HasSuffix(filename, ".zst"):
-		rd = zstd.NewReader(rd)
-		//if rd, err = zstd.NewReader(rd); err != nil {
-		//	log.Fatalf("failed to init gzip reader: %s", err)
-		//}
+		if rd, err = zstd.NewReader(rd); err != nil {
+			log.Fatalf("failed to init gzip reader: %s", err)
+		}
 	}
 
 	if r.reverse {

@@ -28,7 +28,7 @@ ifeq ($(DEVGO_PATH),)
 endif
 
 
-export CGO_ENABLED ?= 1
+export CGO_ENABLED ?= 0
 BUILD_PKG = ./cmd/catp
 BUILD_LDFLAGS=-s -w
 BUILD_FLAGS=-trimpath -pgo=./cmd/catp.pgo
@@ -41,3 +41,5 @@ BUILD_FLAGS=-trimpath -pgo=./cmd/catp.pgo
 
 # Add your custom targets here.
 
+build-linux-docker:
+	@docker run -v $$PWD:/app --rm golang bash -c "git config --global --add safe.directory /app && cd /app && make build"
