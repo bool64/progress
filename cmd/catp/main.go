@@ -70,7 +70,7 @@ func (r *runner) scanFile(rd io.Reader) {
 	for s.Scan() {
 		for _, g := range r.grep {
 			if bytes.Contains(s.Bytes(), g) {
-				_, _ = os.Stdout.Write(s.Bytes())
+				_, _ = os.Stdout.Write(append(s.Bytes(), '\n'))
 				atomic.AddInt64(&r.matches, 1)
 
 				break
