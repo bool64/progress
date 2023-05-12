@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bool64/progress"
@@ -21,6 +22,7 @@ type runner struct {
 	pr         *progress.Progress
 	sizes      map[string]int64
 	readBytes  int64
+	matches    int64
 	totalBytes int64
 
 	grep    [][]byte
@@ -45,6 +47,10 @@ func (r *runner) st(s progress.ProgressStatus) string {
 			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
 	}
 
+	if r.grep != nil {
+		res += fmt.Sprintf(", matches %d", atomic.LoadInt64(&r.matches))
+	}
+
 	return res
 }
 
@@ -65,6 +71,7 @@ func (r *runner) scanFile(rd io.Reader) {
 		for _, g := range r.grep {
 			if bytes.Contains(s.Bytes(), g) {
 				_, _ = os.Stdout.Write(s.Bytes())
+				atomic.AddInt64(&r.matches, 1)
 
 				break
 			}
