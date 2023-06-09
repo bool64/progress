@@ -1,7 +1,8 @@
-github.com/bool64/dev v0.2.27 h1:mFT+B74mFVgUeUmm/EbfM6ELPA55lEXBjQ/AOHCwCOc=
-github.com/bool64/progress v0.1.0 h1:khsGInrTrQMyskfcRTE9gP982koSqKobYFJ977JLxhA=
-github.com/bool64/progress v0.1.0/go.mod h1:XwIA2+r2sEKxIRa6TFR0FqD3GHt0wz4dk4IL5CwbuKo=
+github.com/bool64/dev v0.2.28 h1:6ayDfrB/jnNr2iQAZHI+uT3Qi6rErSbJYQs1y8rSrwM=
+github.com/bool64/dev v0.2.28/go.mod h1:iJbh1y/HkunEPhgebWRNcs8wfGq7sjvJ6W5iabL8ACg=
+github.com/bool64/progress v0.1.5 h1:4pVhZsRsuiFXs5KvN5NaocSUZXAws1st3o2BLNkeXkU=
+github.com/bool64/progress v0.1.5/go.mod h1:XwIA2+r2sEKxIRa6TFR0FqD3GHt0wz4dk4IL5CwbuKo=
 github.com/klauspost/compress v1.16.5 h1:IFV2oUNUzZaz+XyusxpLzpzS8Pt5rh0Z16For/djlyI=
 github.com/klauspost/compress v1.16.5/go.mod h1:ntbaceVETuRiXiv4DpjP66DpAtAGkEQskQzEyD//IeE=
-github.com/klauspost/pgzip v1.2.5 h1:qnWYvvKqedOF2ulHpMG72XQol4ILEJ8k2wwRl/Km8oE=
-github.com/klauspost/pgzip v1.2.5/go.mod h1:Ch1tH69qFZu15pkjo5kYi6mth2Zzwzt50oCQKQE9RUs=
+github.com/klauspost/pgzip v1.2.6 h1:8RXeL5crjEUFnR2/Sn6GJNWtSQ3Dk8pq4CL3jvdDyjU=
+github.com/klauspost/pgzip v1.2.6/go.mod h1:Ch1tH69qFZu15pkjo5kYi6mth2Zzwzt50oCQKQE9RUs=

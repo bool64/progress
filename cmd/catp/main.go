@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
 	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
@@ -106,7 +107,6 @@ func (r *runner) cat(filename string) {
 	}
 
 	if r.reverse {
-
 	}
 
 	r.pr.Start(func(t *progress.Task) {
@@ -134,8 +134,15 @@ func (r *runner) cat(filename string) {
 func main() {
 	grep := flag.String("grep", "", "grep pattern, may contain multiple patterns separated by \\|")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
+	ver := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
+
+	if *ver {
+		fmt.Println(version.Module("github.com/bool64/progress").Version)
+
+		return
+	}
 
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile) //nolint:gosec
