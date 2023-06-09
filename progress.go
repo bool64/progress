@@ -1,3 +1,4 @@
+// Package progress provides helpers to print progress status.
 package progress
 
 import (
@@ -8,8 +9,8 @@ import (
 	"time"
 )
 
-// ProgressStatus describes current progress.
-type ProgressStatus struct {
+// Status describes current progress.
+type Status struct {
 	Task           string
 	DonePercent    float64
 	LinesCompleted int64
@@ -17,13 +18,13 @@ type ProgressStatus struct {
 	SpeedLPS       float64
 	Elapsed        time.Duration
 	Remaining      time.Duration
-	Metrics        []ProgressMetric
+	Metrics        []Metric
 }
 
 // Progress reports reading performance.
 type Progress struct {
 	Interval       time.Duration
-	Print          func(status ProgressStatus)
+	Print          func(status Status)
 	ShowHeapStats  bool
 	ShowLinesStats bool
 	done           chan bool
@@ -31,30 +32,30 @@ type Progress struct {
 	lines          func() int64
 	current        func() int64
 	tot            func() int64
-	prnt           func(s ProgressStatus)
+	prnt           func(s Status)
 	start          time.Time
-	metrics        []ProgressMetric
+	metrics        []Metric
 }
 
-// ProgressType describes metric value.
-type ProgressType string
+// Type describes metric value.
+type Type string
 
-// ProgressType values.
+// Type values.
 const (
-	ProgressBytes    = ProgressType("bytes")
-	ProgressDuration = ProgressType("duration")
-	ProgressGauge    = ProgressType("gauge")
+	Bytes    = Type("bytes")
+	Duration = Type("duration")
+	Gauge    = Type("gauge")
 )
 
-// ProgressMetric is an operation metric.
-type ProgressMetric struct {
+// Metric is an operation metric.
+type Metric struct {
 	Name  string
-	Type  ProgressType
+	Type  Type
 	Value *int64
 }
 
-// DefaultStatus renders ProgressStatus as a string.
-func DefaultStatus(s ProgressStatus) string {
+// DefaultStatus renders Status as a string.
+func DefaultStatus(s Status) string {
 	if s.Task != "" {
 		s.Task += ": "
 	}
@@ -71,18 +72,18 @@ func DefaultStatus(s ProgressStatus) string {
 	return res
 }
 
-// MetricsStatus renders ProgressStatus metrics as a string.
-func MetricsStatus(s ProgressStatus) string {
+// MetricsStatus renders Status metrics as a string.
+func MetricsStatus(s Status) string {
 	metrics := ""
 
 	for _, m := range s.Metrics {
 		switch m.Type {
-		case ProgressBytes:
+		case Bytes:
 			spdMBPS := float64(atomic.LoadInt64(m.Value)) / (s.Elapsed.Seconds() * 1024 * 1024)
 			metrics += fmt.Sprintf("%s: %.1f MB/s, ", m.Name, spdMBPS)
-		case ProgressDuration:
+		case Duration:
 			metrics += m.Name + ": " + time.Duration(atomic.LoadInt64(m.Value)).String() + ", "
-		case ProgressGauge:
+		case Gauge:
 			metrics += fmt.Sprintf("%s: %d, ", m.Name, atomic.LoadInt64(m.Value))
 		}
 	}
@@ -94,6 +95,7 @@ func MetricsStatus(s ProgressStatus) string {
 	return metrics
 }
 
+// Task describes long running process.
 type Task struct {
 	TotalBytes   func() int64
 	CurrentBytes func() int64
@@ -123,7 +125,7 @@ func (p *Progress) Start(options ...func(t *Task)) {
 
 	p.prnt = p.Print
 	if p.prnt == nil {
-		p.prnt = func(s ProgressStatus) {
+		p.prnt = func(s Status) {
 			println(DefaultStatus(s))
 		}
 	}
@@ -151,12 +153,12 @@ func (p *Progress) Start(options ...func(t *Task)) {
 }
 
 // AddMetrics adds more metrics to progress status message.
-func (p *Progress) AddMetrics(metrics ...ProgressMetric) {
+func (p *Progress) AddMetrics(metrics ...Metric) {
 	p.metrics = append(p.metrics, metrics...)
 }
 
 func (p *Progress) printStatus(last bool) {
-	s := ProgressStatus{}
+	s := Status{}
 	s.Task = p.task
 	s.LinesCompleted = p.lines()
 	s.Metrics = p.metrics
@@ -251,5 +253,5 @@ func (cr *CountingWriter) Lines() int64 {
 
 // MetricsExposer provides metric counters.
 type MetricsExposer interface {
-	Metrics() []ProgressMetric
+	Metrics() []Metric
 }
