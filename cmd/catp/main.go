@@ -1,3 +1,4 @@
+// Package main provides catp CLI tool.
 package main
 
 import (
@@ -26,22 +27,22 @@ type runner struct {
 	matches    int64
 	totalBytes int64
 
-	grep    [][]byte
-	reverse bool
+	grep [][]byte
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
+	lastErr      error
 }
 
-// st renders ProgressStatus as a string.
-func (r *runner) st(s progress.ProgressStatus) string {
+// st renders Status as a string.
+func (r *runner) st(s progress.Status) string {
 	var res string
+
 	if len(r.sizes) > 1 {
 		fileDonePercent := 100 * float64(r.currentFile.Bytes()) / float64(r.currentTotal)
 		res = fmt.Sprintf("all: %.1f%% bytes read, %s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
 			s.DonePercent, s.Task, fileDonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
 			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
-
 	} else {
 		res = fmt.Sprintf("%s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
 			s.Task, s.DonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
@@ -71,7 +72,12 @@ func (r *runner) scanFile(rd io.Reader) {
 	for s.Scan() {
 		for _, g := range r.grep {
 			if bytes.Contains(s.Bytes(), g) {
-				_, _ = os.Stdout.Write(append(s.Bytes(), '\n'))
+				if _, err := os.Stdout.Write(append(s.Bytes(), '\n')); err != nil {
+					r.lastErr = err
+
+					return
+				}
+
 				atomic.AddInt64(&r.matches, 1)
 
 				break
@@ -80,16 +86,21 @@ func (r *runner) scanFile(rd io.Reader) {
 	}
 
 	if err := s.Err(); err != nil {
-		log.Fatal(err)
+		r.lastErr = err
 	}
 }
 
-func (r *runner) cat(filename string) {
-	file, err := os.Open(filename)
+func (r *runner) cat(filename string) (err error) {
+	file, err := os.Open(filename) //nolint:gosec
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	defer file.Close()
+
+	defer func() {
+		if clErr := file.Close(); clErr != nil && err == nil {
+			err = clErr
+		}
+	}()
 
 	r.currentFile = &progress.CountingReader{Reader: file}
 	r.currentTotal = r.sizes[filename]
@@ -98,15 +109,12 @@ func (r *runner) cat(filename string) {
 	switch {
 	case strings.HasSuffix(filename, ".gz"):
 		if rd, err = gzip.NewReader(rd); err != nil {
-			log.Fatalf("failed to init gzip reader: %s", err)
+			return fmt.Errorf("failed to init gzip reader: %w", err)
 		}
 	case strings.HasSuffix(filename, ".zst"):
 		if rd, err = zstd.NewReader(rd); err != nil {
-			log.Fatalf("failed to init gzip reader: %s", err)
+			return fmt.Errorf("failed to init gzip reader: %w", err)
 		}
-	}
-
-	if r.reverse {
 	}
 
 	r.pr.Start(func(t *progress.Task) {
@@ -121,7 +129,7 @@ func (r *runner) cat(filename string) {
 		t.Continue = true
 	})
 
-	if len(r.grep) > 0 || r.reverse {
+	if len(r.grep) > 0 {
 		r.scanFile(rd)
 	} else {
 		r.readFile(rd)
@@ -129,6 +137,25 @@ func (r *runner) cat(filename string) {
 
 	r.pr.Stop()
 	r.readBytes += r.currentFile.Bytes()
+
+	return r.lastErr
+}
+
+func startProfiling(cpuProfile string) {
+	f, err := os.Create(cpuProfile) //nolint:gosec
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err = pprof.StartCPUProfile(f); err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		time.Sleep(10 * time.Second)
+		pprof.StopCPUProfile()
+		println("CPU profile written to", cpuProfile)
+	}()
 }
 
 func main() {
@@ -145,20 +172,7 @@ func main() {
 	}
 
 	if *cpuProfile != "" {
-		f, err := os.Create(*cpuProfile) //nolint:gosec
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if err = pprof.StartCPUProfile(f); err != nil {
-			log.Fatal(err)
-		}
-
-		go func() {
-			time.Sleep(10 * time.Second)
-			pprof.StopCPUProfile()
-			println("CPU profile written to", *cpuProfile)
-		}()
+		startProfiling(*cpuProfile)
 	}
 
 	r := &runner{}
@@ -172,7 +186,7 @@ func main() {
 	r.sizes = make(map[string]int64)
 	r.pr = &progress.Progress{
 		Interval: 5 * time.Second,
-		Print: func(status progress.ProgressStatus) {
+		Print: func(status progress.Status) {
 			println(r.st(status))
 		},
 	}
@@ -190,6 +204,8 @@ func main() {
 	}
 
 	for i := 0; i < flag.NArg(); i++ {
-		r.cat(flag.Arg(i))
+		if err := r.cat(flag.Arg(i)); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
