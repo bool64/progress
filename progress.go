@@ -51,7 +51,7 @@ const (
 type Metric struct {
 	Name  string
 	Type  Type
-	Value *int64
+	Value func() int64
 }
 
 // DefaultStatus renders Status as a string.
@@ -79,12 +79,12 @@ func MetricsStatus(s Status) string {
 	for _, m := range s.Metrics {
 		switch m.Type {
 		case Bytes:
-			spdMBPS := float64(atomic.LoadInt64(m.Value)) / (s.Elapsed.Seconds() * 1024 * 1024)
+			spdMBPS := float64(m.Value()) / (s.Elapsed.Seconds() * 1024 * 1024)
 			metrics += fmt.Sprintf("%s: %.1f MB/s, ", m.Name, spdMBPS)
 		case Duration:
-			metrics += m.Name + ": " + time.Duration(atomic.LoadInt64(m.Value)).String() + ", "
+			metrics += m.Name + ": " + time.Duration(m.Value()).String() + ", "
 		case Gauge:
-			metrics += fmt.Sprintf("%s: %d, ", m.Name, atomic.LoadInt64(m.Value))
+			metrics += fmt.Sprintf("%s: %d, ", m.Name, m.Value())
 		}
 	}
 
@@ -95,7 +95,7 @@ func MetricsStatus(s Status) string {
 	return metrics
 }
 
-// Task describes long running process.
+// Task describes a long-running process.
 type Task struct {
 	TotalBytes   func() int64
 	CurrentBytes func() int64
@@ -183,6 +183,15 @@ func (p *Progress) Stop() {
 	p.metrics = nil
 
 	close(p.done)
+}
+
+// Lines returns current number of lines.
+func (p *Progress) Lines() int64 {
+	if p.lines != nil {
+		return p.lines()
+	}
+
+	return 0
 }
 
 // CountingReader wraps io.Reader to count bytes.
