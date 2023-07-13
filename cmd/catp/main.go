@@ -24,6 +24,7 @@ type runner struct {
 	pr         *progress.Progress
 	sizes      map[string]int64
 	readBytes  int64
+	readLines  int64
 	matches    int64
 	totalBytes int64
 
@@ -124,7 +125,9 @@ func (r *runner) cat(filename string) (err error) {
 		t.CurrentBytes = func() int64 {
 			return r.readBytes + r.currentFile.Bytes()
 		}
-		t.CurrentLines = r.currentFile.Lines
+		t.CurrentLines = func() int64 {
+			return r.readLines + r.currentFile.Lines()
+		}
 		t.Task = filename
 		t.Continue = true
 	})
@@ -137,6 +140,7 @@ func (r *runner) cat(filename string) (err error) {
 
 	r.pr.Stop()
 	r.readBytes += r.currentFile.Bytes()
+	r.readLines += r.currentFile.Lines()
 
 	return r.lastErr
 }
