@@ -1,5 +1,5 @@
-// Package app provides catp CLI tool as importable package.
-package app
+// Package catp provides catp CLI tool as importable package.
+package catp
 
 import (
 	"bufio"

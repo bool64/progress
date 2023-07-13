@@ -4,11 +4,11 @@ package main
 import (
 	"log"
 
-	"github.com/bool64/progress/cmd/catp/app"
+	"github.com/bool64/progress/cmd/catp/catp"
 )
 
 func main() {
-	if err := app.Main(); err != nil {
+	if err := catp.Main(); err != nil {
 		log.Fatal(err)
 	}
 }
