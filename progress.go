@@ -28,12 +28,14 @@ type Progress struct {
 	ShowHeapStats  bool
 	ShowLinesStats bool
 	done           chan bool
-	task           string
+	task           Task
 	lines          func() int64
 	current        func() int64
 	tot            func() int64
 	prnt           func(s Status)
 	start          time.Time
+	continuedLines int64
+	continuedBytes int64
 	metrics        []Metric
 }
 
@@ -113,7 +115,17 @@ func (p *Progress) Start(options ...func(t *Task)) {
 		o(&task)
 	}
 
-	p.task = task.Task
+	if task.Continue {
+		if p.current != nil {
+			p.continuedBytes += p.current()
+		}
+
+		if p.lines != nil {
+			p.continuedLines += p.lines()
+		}
+	}
+
+	p.task = task
 	p.current = task.CurrentBytes
 	p.lines = task.CurrentLines
 	p.tot = task.TotalBytes
@@ -132,8 +144,14 @@ func (p *Progress) Start(options ...func(t *Task)) {
 
 	if !task.Continue || p.start.IsZero() {
 		p.start = time.Now()
+		p.continuedBytes = 0
+		p.continuedLines = 0
 	}
 
+	p.startPrinter(interval)
+}
+
+func (p *Progress) startPrinter(interval time.Duration) {
 	done := p.done
 	t := time.NewTicker(interval)
 
@@ -157,13 +175,21 @@ func (p *Progress) AddMetrics(metrics ...Metric) {
 	p.metrics = append(p.metrics, metrics...)
 }
 
+// Reset drops continued counters.
+func (p *Progress) Reset() {
+	p.start = time.Time{}
+	p.continuedLines = 0
+	p.continuedBytes = 0
+	p.metrics = nil
+}
+
 func (p *Progress) printStatus(last bool) {
 	s := Status{}
-	s.Task = p.task
-	s.LinesCompleted = p.lines()
+	s.Task = p.task.Task
+	s.LinesCompleted = p.Lines()
 	s.Metrics = p.metrics
 
-	b := float64(p.current())
+	b := float64(p.Bytes())
 	s.DonePercent = 100 * b / float64(p.tot())
 	s.Elapsed = time.Since(p.start)
 	s.SpeedMBPS = (b / s.Elapsed.Seconds()) / (1024 * 1024)
@@ -180,18 +206,30 @@ func (p *Progress) printStatus(last bool) {
 // Stop stops progress reporting.
 func (p *Progress) Stop() {
 	p.printStatus(true)
-	p.metrics = nil
+
+	if !p.task.Continue {
+		p.metrics = nil
+	}
 
 	close(p.done)
+}
+
+// Bytes returns current number of bytes.
+func (p *Progress) Bytes() int64 {
+	if p.current != nil {
+		return p.continuedBytes + p.current()
+	}
+
+	return p.continuedBytes
 }
 
 // Lines returns current number of lines.
 func (p *Progress) Lines() int64 {
 	if p.lines != nil {
-		return p.lines()
+		return p.continuedLines + p.lines()
 	}
 
-	return 0
+	return p.continuedLines
 }
 
 // CountingReader wraps io.Reader to count bytes.

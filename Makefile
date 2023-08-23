@@ -1,4 +1,4 @@
-#GOLANGCI_LINT_VERSION := "v1.51.1" # Optional configuration to pinpoint golangci-lint version.
+#GOLANGCI_LINT_VERSION := "v1.54.1" # Optional configuration to pinpoint golangci-lint version.
 
 # The head of Makefile determines location of dev-go to include standard targets.
 GO ?= go
@@ -31,7 +31,6 @@ endif
 export CGO_ENABLED ?= 0
 BUILD_PKG = ./cmd/catp
 BUILD_LDFLAGS=-s -w
-BUILD_FLAGS=-trimpath -pgo=./cmd/catp.pgo
 
 -include $(DEVGO_PATH)/makefiles/main.mk
 -include $(DEVGO_PATH)/makefiles/lint.mk

@@ -107,28 +107,30 @@ func (r *runner) cat(filename string) (err error) {
 	r.currentFile = &progress.CountingReader{Reader: file}
 	r.currentTotal = r.sizes[filename]
 	rd := io.Reader(r.currentFile)
+	lines := r.currentFile
 
 	switch {
 	case strings.HasSuffix(filename, ".gz"):
 		if rd, err = gzip.NewReader(rd); err != nil {
 			return fmt.Errorf("failed to init gzip reader: %w", err)
 		}
+		lines = &progress.CountingReader{Reader: rd}
+		rd = lines
 	case strings.HasSuffix(filename, ".zst"):
 		if rd, err = zstd.NewReader(rd); err != nil {
 			return fmt.Errorf("failed to init zst reader: %w", err)
 		}
+		lines = &progress.CountingReader{Reader: rd}
+		rd = lines
 	}
 
 	r.pr.Start(func(t *progress.Task) {
 		t.TotalBytes = func() int64 {
 			return r.totalBytes
 		}
-		t.CurrentBytes = func() int64 {
-			return r.readBytes + r.currentFile.Bytes()
-		}
-		t.CurrentLines = func() int64 {
-			return r.readLines + r.currentFile.Lines()
-		}
+		t.CurrentBytes = r.currentFile.Bytes
+		t.CurrentLines = lines.Lines
+
 		t.Task = filename
 		t.Continue = true
 	})
@@ -140,8 +142,6 @@ func (r *runner) cat(filename string) (err error) {
 	}
 
 	r.pr.Stop()
-	r.readBytes += r.currentFile.Bytes()
-	r.readLines += r.currentFile.Lines()
 
 	return r.lastErr
 }
@@ -180,6 +180,7 @@ func Main() error { //nolint:funlen,cyclop
 
 	if *cpuProfile != "" {
 		startProfiling(*cpuProfile)
+		defer pprof.StopCPUProfile()
 	}
 
 	r := &runner{}
