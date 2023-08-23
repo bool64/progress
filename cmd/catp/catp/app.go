@@ -24,8 +24,6 @@ type runner struct {
 	output     io.Writer
 	pr         *progress.Progress
 	sizes      map[string]int64
-	readBytes  int64
-	readLines  int64
 	matches    int64
 	totalBytes int64
 
@@ -114,12 +112,14 @@ func (r *runner) cat(filename string) (err error) {
 		if rd, err = gzip.NewReader(rd); err != nil {
 			return fmt.Errorf("failed to init gzip reader: %w", err)
 		}
+
 		lines = &progress.CountingReader{Reader: rd}
 		rd = lines
 	case strings.HasSuffix(filename, ".zst"):
 		if rd, err = zstd.NewReader(rd); err != nil {
 			return fmt.Errorf("failed to init zst reader: %w", err)
 		}
+
 		lines = &progress.CountingReader{Reader: rd}
 		rd = lines
 	}
@@ -180,6 +180,7 @@ func Main() error { //nolint:funlen,cyclop
 
 	if *cpuProfile != "" {
 		startProfiling(*cpuProfile)
+
 		defer pprof.StopCPUProfile()
 	}
 
