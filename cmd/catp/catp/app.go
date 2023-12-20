@@ -11,18 +11,23 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
-	"github.com/klauspost/compress/zstd"
+	//"github.com/klauspost/compress/zstd"
+	"github.com/DataDog/zstd"
 	gzip "github.com/klauspost/pgzip"
 )
 
 type runner struct {
-	output     io.Writer
+	mu     sync.Mutex
+	output io.Writer
+
 	pr         *progress.Progress
+	parallel   int
 	sizes      map[string]int64
 	matches    int64
 	totalBytes int64
@@ -70,22 +75,47 @@ func (r *runner) scanFile(rd io.Reader) {
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
 	for s.Scan() {
+		shouldWrite := true
+
 		for _, g := range r.grep {
+			shouldWrite = false
+
 			if bytes.Contains(s.Bytes(), g) {
-				if _, err := r.output.Write(append(s.Bytes(), '\n')); err != nil {
-					r.lastErr = err
-
-					return
-				}
-
-				atomic.AddInt64(&r.matches, 1)
+				shouldWrite = true
 
 				break
 			}
 		}
+
+		if !shouldWrite {
+			continue
+		}
+
+		atomic.AddInt64(&r.matches, 1)
+
+		if r.parallel > 1 {
+			r.mu.Lock()
+		}
+
+		if _, err := r.output.Write(append(s.Bytes(), '\n')); err != nil {
+			r.lastErr = err
+
+			if r.parallel > 1 {
+				r.mu.Unlock()
+			}
+
+			return
+		}
+
+		if r.parallel > 1 {
+			r.mu.Unlock()
+		}
 	}
 
 	if err := s.Err(); err != nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
 		r.lastErr = err
 	}
 }
@@ -102,10 +132,17 @@ func (r *runner) cat(filename string) (err error) {
 		}
 	}()
 
-	r.currentFile = &progress.CountingReader{Reader: file}
-	r.currentTotal = r.sizes[filename]
+	cr := &progress.CountingReader{Reader: file}
+
+	if r.parallel <= 1 {
+		r.currentFile = cr
+		r.currentTotal = r.sizes[filename]
+	} else {
+
+	}
+
 	rd := io.Reader(r.currentFile)
-	lines := r.currentFile
+	lines := cr
 
 	switch {
 	case strings.HasSuffix(filename, ".gz"):
@@ -116,9 +153,11 @@ func (r *runner) cat(filename string) (err error) {
 		lines = &progress.CountingReader{Reader: rd}
 		rd = lines
 	case strings.HasSuffix(filename, ".zst"):
-		if rd, err = zstd.NewReader(rd); err != nil {
-			return fmt.Errorf("failed to init zst reader: %w", err)
-		}
+		//if rd, err = zstd.NewReader(rd); err != nil {
+		//	return fmt.Errorf("failed to init zst reader: %w", err)
+		//}
+
+		rd = zstd.NewReader(rd)
 
 		lines = &progress.CountingReader{Reader: rd}
 		rd = lines
@@ -166,6 +205,7 @@ func startProfiling(cpuProfile string) {
 // Main is the entry point for catp CLI tool.
 func Main() error { //nolint:funlen,cyclop
 	grep := flag.String("grep", "", "grep pattern, may contain multiple patterns separated by \\|")
+	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	output := flag.String("output", "", "output to file instead of STDOUT")
 	ver := flag.Bool("version", false, "print version and exit")
@@ -229,9 +269,39 @@ func Main() error { //nolint:funlen,cyclop
 		r.sizes[fn] = st.Size()
 	}
 
-	for i := 0; i < flag.NArg(); i++ {
-		if err := r.cat(flag.Arg(i)); err != nil {
-			return err
+	if *parallel >= 2 {
+		sem := make(chan struct{}, *parallel)
+		errs := make(chan error, 1)
+
+		for i := 0; i < flag.NArg(); i++ {
+			i := i
+			select {
+			case err := <-errs:
+				return err
+			case sem <- struct{}{}:
+			}
+
+			go func() {
+				defer func() {
+					<-sem
+				}()
+
+				if err := r.cat(flag.Arg(i)); err != nil {
+					errs <- err
+				}
+			}()
+
+		}
+
+		// Wait for goroutines to finish by acquiring all slots.
+		for i := 0; i < cap(sem); i++ {
+			sem <- struct{}{}
+		}
+	} else {
+		for i := 0; i < flag.NArg(); i++ {
+			if err := r.cat(flag.Arg(i)); err != nil {
+				return err
+			}
 		}
 	}
 
