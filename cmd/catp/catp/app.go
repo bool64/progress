@@ -34,7 +34,8 @@ type runner struct {
 	currentBytes int64
 	currentLines int64
 
-	grep [][]byte
+	// grep is a slice of AND items, that are slices of OR items.
+	grep [][][]byte
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
@@ -87,11 +88,18 @@ func (r *runner) scanFile(rd io.Reader) {
 			lines = 0
 		}
 
-		for _, g := range r.grep {
-			shouldWrite = false
+		for _, andGrep := range r.grep {
+			andPassed := false
+			for _, orGrep := range andGrep {
+				if bytes.Contains(s.Bytes(), orGrep) {
+					andPassed = true
 
-			if bytes.Contains(s.Bytes(), g) {
-				shouldWrite = true
+					break
+				}
+			}
+
+			if !andPassed {
+				shouldWrite = false
 
 				break
 			}
@@ -144,16 +152,22 @@ func (r *runner) cat(filename string) (err error) {
 		}
 	}()
 
-	cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
+	var rd io.Reader
 
-	if r.parallel <= 1 {
-		cr = progress.NewCountingReader(file)
-		cr.SetLines(nil)
-		r.currentFile = cr
-		r.currentTotal = r.sizes[filename]
+	if r.pr != nil {
+		cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
+
+		if r.parallel <= 1 {
+			cr = progress.NewCountingReader(file)
+			cr.SetLines(nil)
+			r.currentFile = cr
+			r.currentTotal = r.sizes[filename]
+		}
+
+		rd = io.Reader(cr)
+	} else {
+		rd = file
 	}
-
-	rd := io.Reader(cr)
 
 	switch {
 	case strings.HasSuffix(filename, ".gz"):
@@ -173,16 +187,18 @@ func (r *runner) cat(filename string) (err error) {
 	}
 
 	if r.parallel <= 1 {
-		r.pr.Start(func(t *progress.Task) {
-			t.TotalBytes = func() int64 {
-				return r.totalBytes
-			}
+		if r.pr != nil {
+			r.pr.Start(func(t *progress.Task) {
+				t.TotalBytes = func() int64 {
+					return r.totalBytes
+				}
 
-			t.CurrentBytes = r.currentFile.Bytes
-			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
-			t.Task = filename
-			t.Continue = true
-		})
+				t.CurrentBytes = r.currentFile.Bytes
+				t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+				t.Task = filename
+				t.Continue = true
+			})
+		}
 	}
 
 	if len(r.grep) > 0 {
@@ -191,10 +207,12 @@ func (r *runner) cat(filename string) (err error) {
 		r.readFile(rd)
 	}
 
-	cr.Sync()
+	if r.pr != nil {
+		//cr.Sync()
 
-	if r.parallel <= 1 {
-		r.pr.Stop()
+		if r.parallel <= 1 {
+			r.pr.Stop()
+		}
 	}
 
 	return r.lastErr
@@ -230,13 +248,29 @@ func startProfiling(cpuProfile string, memProfile string) {
 	}()
 }
 
+type stringFlags []string
+
+func (i *stringFlags) String() string {
+	return "my string representation"
+}
+
+func (i *stringFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 // Main is the entry point for catp CLI tool.
 func Main() error { //nolint:funlen,cyclop
-	grep := flag.String("grep", "", "grep pattern, may contain multiple patterns separated by \\|")
+	var grep stringFlags
+
+	flag.Var(&grep, "grep", "grep pattern, may contain multiple OR patterns separated by \\|,\n"+
+		"each -grep value is added with AND logic, akin to extra '| grep foo',\n"+
+		"for example, you can use '-grep bar\\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo")
 	parallel := flag.Int("parallel", 0, "number of parallel readers if multiple files are provided")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file instead of STDOUT")
+	noProgress := flag.Bool("no-progress", false, "disable progress printing")
 	ver := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
@@ -273,18 +307,25 @@ func Main() error { //nolint:funlen,cyclop
 		}()
 	}
 
-	if *grep != "" {
-		for _, s := range strings.Split(*grep, "\\|") {
-			r.grep = append(r.grep, []byte(s))
+	if len(grep) > 0 {
+		for _, andGrep := range grep {
+			var og [][]byte
+			for _, orGrep := range strings.Split(andGrep, "\\|") {
+				og = append(og, []byte(orGrep))
+			}
+
+			r.grep = append(r.grep, og)
 		}
 	}
 
 	r.sizes = make(map[string]int64)
-	r.pr = &progress.Progress{
-		Interval: 5 * time.Second,
-		Print: func(status progress.Status) {
-			println(r.st(status))
-		},
+	if !*noProgress {
+		r.pr = &progress.Progress{
+			Interval: 5 * time.Second,
+			Print: func(status progress.Status) {
+				println(r.st(status))
+			},
+		}
 	}
 
 	for i := 0; i < flag.NArg(); i++ {
@@ -301,12 +342,14 @@ func Main() error { //nolint:funlen,cyclop
 
 	if *parallel >= 2 {
 		pr := r.pr
-		pr.Start(func(t *progress.Task) {
-			t.TotalBytes = func() int64 { return r.totalBytes }
-			t.CurrentBytes = func() int64 { return atomic.LoadInt64(&r.currentBytes) }
-			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
-			t.Task = "all"
-		})
+		if pr != nil {
+			pr.Start(func(t *progress.Task) {
+				t.TotalBytes = func() int64 { return r.totalBytes }
+				t.CurrentBytes = func() int64 { return atomic.LoadInt64(&r.currentBytes) }
+				t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+				t.Task = "all"
+			})
+		}
 
 		sem := make(chan struct{}, *parallel)
 		errs := make(chan error, 1)
@@ -328,7 +371,6 @@ func Main() error { //nolint:funlen,cyclop
 					errs <- err
 				}
 			}()
-
 		}
 
 		// Wait for goroutines to finish by acquiring all slots.
@@ -336,7 +378,9 @@ func Main() error { //nolint:funlen,cyclop
 			sem <- struct{}{}
 		}
 
-		pr.Stop()
+		if pr != nil {
+			pr.Stop()
+		}
 	} else {
 		for i := 0; i < flag.NArg(); i++ {
 			if err := r.cat(flag.Arg(i)); err != nil {
