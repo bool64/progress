@@ -152,22 +152,16 @@ func (r *runner) cat(filename string) (err error) {
 		}
 	}()
 
-	var rd io.Reader
+	cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
 
-	if r.pr != nil {
-		cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
-
-		if r.parallel <= 1 {
-			cr = progress.NewCountingReader(file)
-			cr.SetLines(nil)
-			r.currentFile = cr
-			r.currentTotal = r.sizes[filename]
-		}
-
-		rd = io.Reader(cr)
-	} else {
-		rd = file
+	if r.parallel <= 1 {
+		cr = progress.NewCountingReader(file)
+		cr.SetLines(nil)
+		r.currentFile = cr
+		r.currentTotal = r.sizes[filename]
 	}
+
+	rd := io.Reader(cr)
 
 	switch {
 	case strings.HasSuffix(filename, ".gz"):
@@ -187,18 +181,16 @@ func (r *runner) cat(filename string) (err error) {
 	}
 
 	if r.parallel <= 1 {
-		if r.pr != nil {
-			r.pr.Start(func(t *progress.Task) {
-				t.TotalBytes = func() int64 {
-					return r.totalBytes
-				}
+		r.pr.Start(func(t *progress.Task) {
+			t.TotalBytes = func() int64 {
+				return r.totalBytes
+			}
 
-				t.CurrentBytes = r.currentFile.Bytes
-				t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
-				t.Task = filename
-				t.Continue = true
-			})
-		}
+			t.CurrentBytes = r.currentFile.Bytes
+			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+			t.Task = filename
+			t.Continue = true
+		})
 	}
 
 	if len(r.grep) > 0 {
@@ -207,12 +199,10 @@ func (r *runner) cat(filename string) (err error) {
 		r.readFile(rd)
 	}
 
-	if r.pr != nil {
-		//cr.Sync()
+	cr.Sync()
 
-		if r.parallel <= 1 {
-			r.pr.Stop()
-		}
+	if r.parallel <= 1 {
+		r.pr.Stop()
 	}
 
 	return r.lastErr
@@ -319,13 +309,15 @@ func Main() error { //nolint:funlen,cyclop
 	}
 
 	r.sizes = make(map[string]int64)
-	if !*noProgress {
-		r.pr = &progress.Progress{
-			Interval: 5 * time.Second,
-			Print: func(status progress.Status) {
-				println(r.st(status))
-			},
-		}
+	r.pr = &progress.Progress{
+		Interval: 5 * time.Second,
+		Print: func(status progress.Status) {
+			if *noProgress {
+				return
+			}
+
+			println(r.st(status))
+		},
 	}
 
 	for i := 0; i < flag.NArg(); i++ {
@@ -342,14 +334,12 @@ func Main() error { //nolint:funlen,cyclop
 
 	if *parallel >= 2 {
 		pr := r.pr
-		if pr != nil {
-			pr.Start(func(t *progress.Task) {
-				t.TotalBytes = func() int64 { return r.totalBytes }
-				t.CurrentBytes = func() int64 { return atomic.LoadInt64(&r.currentBytes) }
-				t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
-				t.Task = "all"
-			})
-		}
+		pr.Start(func(t *progress.Task) {
+			t.TotalBytes = func() int64 { return r.totalBytes }
+			t.CurrentBytes = func() int64 { return atomic.LoadInt64(&r.currentBytes) }
+			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+			t.Task = "all"
+		})
 
 		sem := make(chan struct{}, *parallel)
 		errs := make(chan error, 1)
@@ -378,9 +368,7 @@ func Main() error { //nolint:funlen,cyclop
 			sem <- struct{}{}
 		}
 
-		if pr != nil {
-			pr.Stop()
-		}
+		pr.Stop()
 	} else {
 		for i := 0; i < flag.NArg(); i++ {
 			if err := r.cat(flag.Arg(i)); err != nil {
