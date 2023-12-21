@@ -175,7 +175,7 @@ func (r *runner) cat(filename string) (err error) {
 			return fmt.Errorf("failed to init gzip reader: %w", err)
 		}
 	case strings.HasSuffix(filename, ".zst"):
-		if false && r.parallel >= 1 {
+		if r.parallel >= 1 {
 			if rd, err = zstdReader(rd); err != nil {
 				return fmt.Errorf("failed to init zst reader: %w", err)
 			}
