@@ -147,10 +147,10 @@ func (r *runner) cat(filename string) (err error) {
 	cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
 
 	if r.parallel <= 1 {
+		cr = progress.NewCountingReader(file)
+		cr.SetLines(nil)
 		r.currentFile = cr
 		r.currentTotal = r.sizes[filename]
-	} else {
-
 	}
 
 	rd := io.Reader(cr)
