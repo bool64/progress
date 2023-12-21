@@ -232,56 +232,114 @@ func (p *Progress) Lines() int64 {
 	return p.continuedLines
 }
 
+func NewCountingReader(r io.Reader) *CountingReader {
+	return &CountingReader{
+		Reader:    r,
+		lines:     new(int64),
+		readBytes: new(int64),
+	}
+}
+
+func NewSharedCountingReader(r io.Reader, readBytes, lines *int64) *CountingReader {
+	return &CountingReader{
+		Reader:    r,
+		lines:     lines,
+		readBytes: readBytes,
+	}
+}
+
 // CountingReader wraps io.Reader to count bytes.
 type CountingReader struct {
 	Reader io.Reader
 
-	lines     int64
-	readBytes int64
+	lines     *int64
+	readBytes *int64
+
+	readLocal int64
+}
+
+func (cr *CountingReader) SetLines(lines *int64) {
+	cr.lines = lines
+}
+
+func (cr *CountingReader) SetReadBytes(readBytes *int64) {
+	cr.readBytes = readBytes
 }
 
 // Read reads and counts bytes.
 func (cr *CountingReader) Read(p []byte) (n int, err error) {
 	n, err = cr.Reader.Read(p)
 
-	atomic.AddInt64(&cr.readBytes, int64(n))
+	cr.readLocal += int64(n)
+
+	if cr.readLocal > 100000 && cr.readBytes != nil {
+		atomic.AddInt64(cr.readBytes, cr.readLocal)
+		cr.readLocal = 0
+	}
+
+	if cr.lines == nil {
+		return n, err
+	}
 
 	for i := 0; i < n; i++ {
 		if p[i] == '\n' {
-			atomic.AddInt64(&cr.lines, 1)
+			atomic.AddInt64(cr.lines, 1)
 		}
 	}
 
 	return n, err
 }
 
+func (cr *CountingReader) Sync() {
+	if cr.readLocal > 0 && cr.readBytes != nil {
+		atomic.AddInt64(cr.readBytes, cr.readLocal)
+		cr.readLocal = 0
+	}
+}
+
 // Bytes returns number of read bytes.
 func (cr *CountingReader) Bytes() int64 {
-	return atomic.LoadInt64(&cr.readBytes)
+	return atomic.LoadInt64(cr.readBytes)
 }
 
 // Lines returns number of read lines.
 func (cr *CountingReader) Lines() int64 {
-	return atomic.LoadInt64(&cr.lines)
+	return atomic.LoadInt64(cr.lines)
+}
+
+func NewCountingWriter(w io.Writer) *CountingWriter {
+	return &CountingWriter{
+		Writer:       w,
+		writtenBytes: new(int64),
+		lines:        new(int64),
+	}
+}
+
+func NewSharedCountingWriter(w io.Writer, writtenBytes, lines *int64) *CountingWriter {
+	return &CountingWriter{
+		Writer:       w,
+		writtenBytes: writtenBytes,
+		lines:        lines,
+	}
 }
 
 // CountingWriter wraps io.Writer to count bytes.
 type CountingWriter struct {
 	Writer io.Writer
 
-	lines        int64
-	writtenBytes int64
+	lines        *int64
+	writtenBytes *int64
 }
 
 // Write writes and counts bytes.
 func (cr *CountingWriter) Write(p []byte) (n int, err error) {
 	n, err = cr.Writer.Write(p)
 
-	atomic.AddInt64(&cr.writtenBytes, int64(n))
+	atomic.AddInt64(cr.writtenBytes, int64(n))
 
 	for i := 0; i < n; i++ {
 		if p[i] == '\n' {
-			atomic.AddInt64(&cr.lines, 1)
+			atomic.AddInt64(cr.lines, 1)
 		}
 	}
 
@@ -290,12 +348,12 @@ func (cr *CountingWriter) Write(p []byte) (n int, err error) {
 
 // Bytes returns number of written bytes.
 func (cr *CountingWriter) Bytes() int64 {
-	return atomic.LoadInt64(&cr.writtenBytes)
+	return atomic.LoadInt64(cr.writtenBytes)
 }
 
 // Lines returns number of written bytes.
 func (cr *CountingWriter) Lines() int64 {
-	return atomic.LoadInt64(&cr.lines)
+	return atomic.LoadInt64(cr.lines)
 }
 
 // MetricsExposer provides metric counters.

@@ -17,8 +17,7 @@ import (
 
 	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
-	//"github.com/klauspost/compress/zstd"
-	"github.com/DataDog/zstd"
+	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
 )
 
@@ -27,23 +26,27 @@ type runner struct {
 	output io.Writer
 
 	pr         *progress.Progress
-	parallel   int
 	sizes      map[string]int64
 	matches    int64
 	totalBytes int64
+
+	parallel     int
+	currentBytes int64
+	currentLines int64
 
 	grep [][]byte
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
-	lastErr      error
+
+	lastErr error
 }
 
 // st renders Status as a string.
 func (r *runner) st(s progress.Status) string {
 	var res string
 
-	if len(r.sizes) > 1 {
+	if len(r.sizes) > 1 && r.parallel <= 1 {
 		fileDonePercent := 100 * float64(r.currentFile.Bytes()) / float64(r.currentTotal)
 		res = fmt.Sprintf("all: %.1f%% bytes read, %s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
 			s.DonePercent, s.Task, fileDonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
@@ -74,8 +77,15 @@ func (r *runner) scanFile(rd io.Reader) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
+	lines := 0
 	for s.Scan() {
 		shouldWrite := true
+		lines++
+
+		if lines >= 1000 {
+			atomic.AddInt64(&r.currentLines, int64(lines))
+			lines = 0
+		}
 
 		for _, g := range r.grep {
 			shouldWrite = false
@@ -112,6 +122,8 @@ func (r *runner) scanFile(rd io.Reader) {
 		}
 	}
 
+	atomic.AddInt64(&r.currentLines, int64(lines))
+
 	if err := s.Err(); err != nil {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -132,7 +144,7 @@ func (r *runner) cat(filename string) (err error) {
 		}
 	}()
 
-	cr := &progress.CountingReader{Reader: file}
+	cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
 
 	if r.parallel <= 1 {
 		r.currentFile = cr
@@ -141,38 +153,37 @@ func (r *runner) cat(filename string) (err error) {
 
 	}
 
-	rd := io.Reader(r.currentFile)
-	lines := cr
+	rd := io.Reader(cr)
 
 	switch {
 	case strings.HasSuffix(filename, ".gz"):
 		if rd, err = gzip.NewReader(rd); err != nil {
 			return fmt.Errorf("failed to init gzip reader: %w", err)
 		}
-
-		lines = &progress.CountingReader{Reader: rd}
-		rd = lines
 	case strings.HasSuffix(filename, ".zst"):
-		//if rd, err = zstd.NewReader(rd); err != nil {
-		//	return fmt.Errorf("failed to init zst reader: %w", err)
-		//}
-
-		rd = zstd.NewReader(rd)
-
-		lines = &progress.CountingReader{Reader: rd}
-		rd = lines
+		if r.parallel >= 1 {
+			if rd, err = zstdReader(rd); err != nil {
+				return fmt.Errorf("failed to init zst reader: %w", err)
+			}
+		} else {
+			if rd, err = zstd.NewReader(rd); err != nil {
+				return fmt.Errorf("failed to init zst reader: %w", err)
+			}
+		}
 	}
 
-	r.pr.Start(func(t *progress.Task) {
-		t.TotalBytes = func() int64 {
-			return r.totalBytes
-		}
-		t.CurrentBytes = r.currentFile.Bytes
-		t.CurrentLines = lines.Lines
+	if r.parallel <= 1 {
+		r.pr.Start(func(t *progress.Task) {
+			t.TotalBytes = func() int64 {
+				return r.totalBytes
+			}
 
-		t.Task = filename
-		t.Continue = true
-	})
+			t.CurrentBytes = r.currentFile.Bytes
+			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+			t.Task = filename
+			t.Continue = true
+		})
+	}
 
 	if len(r.grep) > 0 {
 		r.scanFile(rd)
@@ -180,12 +191,16 @@ func (r *runner) cat(filename string) (err error) {
 		r.readFile(rd)
 	}
 
-	r.pr.Stop()
+	cr.Sync()
+
+	if r.parallel <= 1 {
+		r.pr.Stop()
+	}
 
 	return r.lastErr
 }
 
-func startProfiling(cpuProfile string) {
+func startProfiling(cpuProfile string, memProfile string) {
 	f, err := os.Create(cpuProfile) //nolint:gosec
 	if err != nil {
 		log.Fatal(err)
@@ -199,14 +214,28 @@ func startProfiling(cpuProfile string) {
 		time.Sleep(10 * time.Second)
 		pprof.StopCPUProfile()
 		println("CPU profile written to", cpuProfile)
+
+		if memProfile != "" {
+			f, err := os.Create(memProfile) //nolint:gosec
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			if err := pprof.WriteHeapProfile(f); err != nil {
+				log.Fatal("writing heap profile:", err)
+			}
+
+			println("Memory profile written to", memProfile)
+		}
 	}()
 }
 
 // Main is the entry point for catp CLI tool.
 func Main() error { //nolint:funlen,cyclop
 	grep := flag.String("grep", "", "grep pattern, may contain multiple patterns separated by \\|")
-	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided")
+	parallel := flag.Int("parallel", 0, "number of parallel readers if multiple files are provided")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
+	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file instead of STDOUT")
 	ver := flag.Bool("version", false, "print version and exit")
 
@@ -219,13 +248,14 @@ func Main() error { //nolint:funlen,cyclop
 	}
 
 	if *cpuProfile != "" {
-		startProfiling(*cpuProfile)
+		startProfiling(*cpuProfile, *memProfile)
 
 		defer pprof.StopCPUProfile()
 	}
 
 	r := &runner{}
 
+	r.parallel = *parallel
 	r.output = os.Stdout
 
 	if *output != "" {
@@ -270,6 +300,14 @@ func Main() error { //nolint:funlen,cyclop
 	}
 
 	if *parallel >= 2 {
+		pr := r.pr
+		pr.Start(func(t *progress.Task) {
+			t.TotalBytes = func() int64 { return r.totalBytes }
+			t.CurrentBytes = func() int64 { return atomic.LoadInt64(&r.currentBytes) }
+			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+			t.Task = "all"
+		})
+
 		sem := make(chan struct{}, *parallel)
 		errs := make(chan error, 1)
 
@@ -297,6 +335,8 @@ func Main() error { //nolint:funlen,cyclop
 		for i := 0; i < cap(sem); i++ {
 			sem <- struct{}{}
 		}
+
+		pr.Stop()
 	} else {
 		for i := 0; i < flag.NArg(); i++ {
 			if err := r.cat(flag.Arg(i)); err != nil {
