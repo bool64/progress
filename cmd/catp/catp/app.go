@@ -3,7 +3,6 @@ package catp
 
 import (
 	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -35,7 +34,7 @@ type runner struct {
 	currentLines int64
 
 	// grep is a slice of AND items, that are slices of OR items.
-	grep [][][]byte
+	grep [][]*stringFinder
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
@@ -91,7 +90,7 @@ func (r *runner) scanFile(rd io.Reader) {
 		for _, andGrep := range r.grep {
 			andPassed := false
 			for _, orGrep := range andGrep {
-				if bytes.Contains(s.Bytes(), orGrep) {
+				if orGrep.next(s.Bytes()) != -1 {
 					andPassed = true
 
 					break
@@ -299,9 +298,10 @@ func Main() error { //nolint:funlen,cyclop
 
 	if len(grep) > 0 {
 		for _, andGrep := range grep {
-			var og [][]byte
+			var og []*stringFinder
 			for _, orGrep := range strings.Split(andGrep, "\\|") {
-				og = append(og, []byte(orGrep))
+				sf := makeStringFinder(orGrep)
+				og = append(og, sf)
 			}
 
 			r.grep = append(r.grep, og)
