@@ -204,10 +204,10 @@ func (p *Progress) printStatus(last bool) {
 		s.Remaining = time.Duration(float64(100*s.Elapsed)/s.DonePercent) - s.Elapsed
 		s.Remaining = s.Remaining.Truncate(time.Second)
 	} else {
-		s.Remaining = -1
+		s.Remaining = 0
 	}
 
-	if s.Remaining > 100*time.Millisecond || s.Remaining == -1 || last {
+	if s.Remaining > 100*time.Millisecond || s.Remaining == 0 || last {
 		p.prnt(s)
 	}
 }
