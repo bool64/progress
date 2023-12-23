@@ -16,8 +16,8 @@ type Status struct {
 	LinesCompleted int64         `json:"lines_completed"`
 	SpeedMBPS      float64       `json:"speed_mbps"`
 	SpeedLPS       float64       `json:"speed_lps"`
-	Elapsed        time.Duration `json:"elapsed"`
-	Remaining      time.Duration `json:"remaining"`
+	Elapsed        time.Duration `json:"-"`
+	Remaining      time.Duration `json:"-"`
 	Metrics        []Metric      `json:"-"`
 }
 

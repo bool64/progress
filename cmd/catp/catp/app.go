@@ -54,8 +54,8 @@ func (r *runner) st(s progress.Status) string {
 		progress.Status
 		CurrentFilePercent float64 `json:"current_file_percent,omitempty"`
 		Matches            *int64  `json:"matches,omitempty"`
-		ElapsedSeconds     float64 `json:"elapsed_seconds"`
-		RemainingSeconds   float64 `json:"remaining_seconds"`
+		ElapsedSeconds     float64 `json:"elapsed_sec"`
+		RemainingSeconds   float64 `json:"remaining_sec"`
 	}
 
 	pr := progressJSON{
@@ -81,8 +81,8 @@ func (r *runner) st(s progress.Status) string {
 	}
 
 	if r.progressJSON != "" {
-		pr.ElapsedSeconds = pr.Elapsed.Seconds()
-		pr.RemainingSeconds = pr.Remaining.Seconds()
+		pr.ElapsedSeconds = pr.Elapsed.Truncate(time.Second).Seconds()
+		pr.RemainingSeconds = pr.Remaining.Round(time.Second).Seconds()
 
 		if j, err := json.Marshal(pr); err == nil {
 			if err = os.WriteFile(r.progressJSON, append(j, '\n'), 0o600); err != nil {
