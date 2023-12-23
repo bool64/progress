@@ -129,21 +129,21 @@ func (r *runner) scanFile(rd io.Reader, out io.Writer) {
 
 		atomic.AddInt64(&r.matches, 1)
 
-		if r.parallel > 1 {
+		if r.parallel > 1 && r.outDir == "" {
 			r.mu.Lock()
 		}
 
 		if _, err := out.Write(append(s.Bytes(), '\n')); err != nil {
 			r.lastErr = err
 
-			if r.parallel > 1 {
+			if r.parallel > 1 && r.outDir == "" {
 				r.mu.Unlock()
 			}
 
 			return
 		}
 
-		if r.parallel > 1 {
+		if r.parallel > 1 && r.outDir == "" {
 			r.mu.Unlock()
 		}
 	}
