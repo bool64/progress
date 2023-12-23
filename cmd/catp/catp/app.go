@@ -4,6 +4,7 @@ package catp
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -25,7 +26,9 @@ type runner struct {
 	mu     sync.Mutex
 	output io.Writer
 
-	pr         *progress.Progress
+	pr           *progress.Progress
+	progressJSON string
+
 	sizes      map[string]int64
 	matches    int64
 	totalBytes int64
@@ -47,10 +50,23 @@ type runner struct {
 func (r *runner) st(s progress.Status) string {
 	var res string
 
+	type progressJSON struct {
+		progress.Status
+		CurrentFilePercent float64 `json:"current_file_percent,omitempty"`
+		Matches            *int64  `json:"matches,omitempty"`
+		ElapsedSeconds     float64 `json:"elapsed_seconds"`
+		RemainingSeconds   float64 `json:"remaining_seconds"`
+	}
+
+	pr := progressJSON{
+		Status: s,
+	}
+
 	if len(r.sizes) > 1 && r.parallel <= 1 {
-		fileDonePercent := 100 * float64(r.currentFile.Bytes()) / float64(r.currentTotal)
+		pr.CurrentFilePercent = 100 * float64(r.currentFile.Bytes()) / float64(r.currentTotal)
+
 		res = fmt.Sprintf("all: %.1f%% bytes read, %s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
-			s.DonePercent, s.Task, fileDonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
+			s.DonePercent, s.Task, pr.CurrentFilePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
 			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
 	} else {
 		res = fmt.Sprintf("%s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
@@ -59,7 +75,20 @@ func (r *runner) st(s progress.Status) string {
 	}
 
 	if r.grep != nil {
-		res += fmt.Sprintf(", matches %d", atomic.LoadInt64(&r.matches))
+		m := atomic.LoadInt64(&r.matches)
+		pr.Matches = &m
+		res += fmt.Sprintf(", matches %d", m)
+	}
+
+	if r.progressJSON != "" {
+		pr.ElapsedSeconds = pr.Elapsed.Seconds()
+		pr.RemainingSeconds = pr.Remaining.Seconds()
+
+		if j, err := json.Marshal(pr); err == nil {
+			if err = os.WriteFile(r.progressJSON, append(j, '\n'), 0o600); err != nil {
+				println("failed to write progress JSON: " + err.Error())
+			}
+		}
 	}
 
 	return res
@@ -270,18 +299,20 @@ func (i *stringFlags) Set(value string) error {
 }
 
 // Main is the entry point for catp CLI tool.
-func Main() error { //nolint:funlen,cyclop,gocognit
+func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 	var grep stringFlags
 
 	flag.Var(&grep, "grep", "grep pattern, may contain multiple OR patterns separated by \\|,\n"+
 		"each -grep value is added with AND logic, akin to extra '| grep foo',\n"+
 		"for example, you can use '-grep bar\\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo")
 
-	parallel := flag.Int("parallel", 0, "number of parallel readers if multiple files are provided")
+	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided\n"+
+		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file instead of STDOUT")
 	noProgress := flag.Bool("no-progress", false, "disable progress printing")
+	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
 
 	flag.Parse()
@@ -301,19 +332,32 @@ func Main() error { //nolint:funlen,cyclop,gocognit
 	r := &runner{}
 
 	r.parallel = *parallel
-	r.output = bufio.NewWriter(os.Stdout)
 
-	if *output != "" {
+	if *output != "" { //nolint:nestif
 		out, err := os.Create(*output)
 		if err != nil {
 			return fmt.Errorf("failed to create output file %s: %w", *output, err)
 		}
 
-		r.output = out
+		w := bufio.NewWriterSize(out, 128*1024)
+		r.output = w
 
 		defer func() {
+			if err := w.Flush(); err != nil {
+				log.Fatalf("failed to flush STDOUT buffer: %s", err)
+			}
+
 			if err := out.Close(); err != nil {
 				log.Fatalf("failed to close output file %s: %s", *output, err)
+			}
+		}()
+	} else {
+		w := bufio.NewWriterSize(os.Stdout, 128*1024)
+		r.output = w
+
+		defer func() {
+			if err := w.Flush(); err != nil {
+				log.Fatalf("failed to flush STDOUT buffer: %s", err)
 			}
 		}()
 	}
@@ -330,14 +374,17 @@ func Main() error { //nolint:funlen,cyclop,gocognit
 	}
 
 	r.sizes = make(map[string]int64)
+	r.progressJSON = *progressJSON
 	r.pr = &progress.Progress{
 		Interval: 5 * time.Second,
 		Print: func(status progress.Status) {
+			s := r.st(status)
+
 			if *noProgress {
 				return
 			}
 
-			println(r.st(status))
+			println(s)
 		},
 	}
 

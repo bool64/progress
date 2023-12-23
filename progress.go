@@ -11,14 +11,14 @@ import (
 
 // Status describes current progress.
 type Status struct {
-	Task           string
-	DonePercent    float64
-	LinesCompleted int64
-	SpeedMBPS      float64
-	SpeedLPS       float64
-	Elapsed        time.Duration
-	Remaining      time.Duration
-	Metrics        []Metric
+	Task           string        `json:"task"`
+	DonePercent    float64       `json:"done_percent"`
+	LinesCompleted int64         `json:"lines_completed"`
+	SpeedMBPS      float64       `json:"speed_mbps"`
+	SpeedLPS       float64       `json:"speed_lps"`
+	Elapsed        time.Duration `json:"elapsed"`
+	Remaining      time.Duration `json:"remaining"`
+	Metrics        []Metric      `json:"-"`
 }
 
 // Progress reports reading performance.
