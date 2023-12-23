@@ -215,6 +215,7 @@ func (r *runner) cat(filename string) (err error) {
 			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
 			t.Task = filename
 			t.Continue = true
+			t.PrintOnStart = true
 		})
 	}
 
@@ -407,6 +408,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 			t.CurrentBytes = func() int64 { return atomic.LoadInt64(&r.currentBytes) }
 			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
 			t.Task = "all"
+			t.PrintOnStart = true
 		})
 
 		sem := make(chan struct{}, *parallel)

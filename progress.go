@@ -104,6 +104,7 @@ type Task struct {
 	CurrentLines func() int64
 	Task         string
 	Continue     bool
+	PrintOnStart bool
 }
 
 // Start spawns background progress reporter.
@@ -154,6 +155,10 @@ func (p *Progress) Start(options ...func(t *Task)) {
 func (p *Progress) startPrinter(interval time.Duration) {
 	done := p.done
 	t := time.NewTicker(interval)
+
+	if p.task.PrintOnStart {
+		p.printStatus(false)
+	}
 
 	go func() {
 		for {
