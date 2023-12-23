@@ -156,10 +156,6 @@ func (p *Progress) startPrinter(interval time.Duration) {
 	done := p.done
 	t := time.NewTicker(interval)
 
-	if p.task.PrintOnStart {
-		p.printStatus(false)
-	}
-
 	go func() {
 		for {
 			select {
@@ -173,6 +169,13 @@ func (p *Progress) startPrinter(interval time.Duration) {
 			}
 		}
 	}()
+
+	if p.task.PrintOnStart {
+		go func() {
+			time.Sleep(time.Millisecond)
+			p.printStatus(false)
+		}()
+	}
 }
 
 // AddMetrics adds more metrics to progress status message.
