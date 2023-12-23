@@ -301,7 +301,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit
 	r := &runner{}
 
 	r.parallel = *parallel
-	r.output = os.Stdout
+	r.output = bufio.NewWriter(os.Stdout)
 
 	if *output != "" {
 		out, err := os.Create(*output)
