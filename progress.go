@@ -200,10 +200,14 @@ func (p *Progress) printStatus(last bool) {
 	s.SpeedMBPS = (b / s.Elapsed.Seconds()) / (1024 * 1024)
 	s.SpeedLPS = float64(s.LinesCompleted) / s.Elapsed.Seconds()
 
-	s.Remaining = time.Duration(float64(100*s.Elapsed)/s.DonePercent) - s.Elapsed
-	s.Remaining = s.Remaining.Truncate(time.Second)
+	if s.DonePercent > 0 {
+		s.Remaining = time.Duration(float64(100*s.Elapsed)/s.DonePercent) - s.Elapsed
+		s.Remaining = s.Remaining.Truncate(time.Second)
+	} else {
+		s.Remaining = -1
+	}
 
-	if s.Remaining > 100*time.Millisecond || last {
+	if s.Remaining > 100*time.Millisecond || s.Remaining == -1 || last {
 		p.prnt(s)
 	}
 }
