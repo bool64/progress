@@ -79,8 +79,8 @@ func (r *runner) scanFile(rd io.Reader) {
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
 	lines := 0
+
 	for s.Scan() {
-		shouldWrite := true
 		lines++
 
 		if lines >= 1000 {
@@ -88,24 +88,7 @@ func (r *runner) scanFile(rd io.Reader) {
 			lines = 0
 		}
 
-		for _, andGrep := range r.grep {
-			andPassed := false
-			for _, orGrep := range andGrep {
-				if bytes.Contains(s.Bytes(), orGrep) {
-					andPassed = true
-
-					break
-				}
-			}
-
-			if !andPassed {
-				shouldWrite = false
-
-				break
-			}
-		}
-
-		if !shouldWrite {
+		if !r.shouldWrite(s.Bytes()) {
 			continue
 		}
 
@@ -140,6 +123,30 @@ func (r *runner) scanFile(rd io.Reader) {
 	}
 }
 
+func (r *runner) shouldWrite(line []byte) bool {
+	shouldWrite := true
+
+	for _, andGrep := range r.grep {
+		andPassed := false
+
+		for _, orGrep := range andGrep {
+			if bytes.Contains(line, orGrep) {
+				andPassed = true
+
+				break
+			}
+		}
+
+		if !andPassed {
+			shouldWrite = false
+
+			break
+		}
+	}
+
+	return shouldWrite
+}
+
 func (r *runner) cat(filename string) (err error) {
 	file, err := os.Open(filename) //nolint:gosec
 	if err != nil {
@@ -152,7 +159,9 @@ func (r *runner) cat(filename string) (err error) {
 		}
 	}()
 
-	cr := progress.NewSharedCountingReader(file, &r.currentBytes, nil)
+	cr := progress.NewCountingReader(file)
+	cr.SetBytes(&r.currentBytes)
+	cr.SetLines(nil)
 
 	if r.parallel <= 1 {
 		cr = progress.NewCountingReader(file)
@@ -163,21 +172,8 @@ func (r *runner) cat(filename string) (err error) {
 
 	rd := io.Reader(cr)
 
-	switch {
-	case strings.HasSuffix(filename, ".gz"):
-		if rd, err = gzip.NewReader(rd); err != nil {
-			return fmt.Errorf("failed to init gzip reader: %w", err)
-		}
-	case strings.HasSuffix(filename, ".zst"):
-		if r.parallel >= 1 {
-			if rd, err = zstdReader(rd); err != nil {
-				return fmt.Errorf("failed to init zst reader: %w", err)
-			}
-		} else {
-			if rd, err = zstd.NewReader(rd); err != nil {
-				return fmt.Errorf("failed to init zst reader: %w", err)
-			}
-		}
+	if rd, err = r.openReader(rd, filename); err != nil {
+		return err
 	}
 
 	if r.parallel <= 1 {
@@ -199,13 +195,36 @@ func (r *runner) cat(filename string) (err error) {
 		r.readFile(rd)
 	}
 
-	cr.Sync()
+	cr.Close()
 
 	if r.parallel <= 1 {
 		r.pr.Stop()
 	}
 
 	return r.lastErr
+}
+
+func (r *runner) openReader(rd io.Reader, filename string) (io.Reader, error) {
+	var err error
+
+	switch {
+	case strings.HasSuffix(filename, ".gz"):
+		if rd, err = gzip.NewReader(rd); err != nil {
+			return nil, fmt.Errorf("failed to init gzip reader: %w", err)
+		}
+	case strings.HasSuffix(filename, ".zst"):
+		if r.parallel >= 1 {
+			if rd, err = zstdReader(rd); err != nil {
+				return nil, fmt.Errorf("failed to init zst reader: %w", err)
+			}
+		} else {
+			if rd, err = zstd.NewReader(rd); err != nil {
+				return nil, fmt.Errorf("failed to init zst reader: %w", err)
+			}
+		}
+	}
+
+	return rd, nil
 }
 
 func startProfiling(cpuProfile string, memProfile string) {
@@ -246,16 +265,18 @@ func (i *stringFlags) String() string {
 
 func (i *stringFlags) Set(value string) error {
 	*i = append(*i, value)
+
 	return nil
 }
 
 // Main is the entry point for catp CLI tool.
-func Main() error { //nolint:funlen,cyclop
+func Main() error { //nolint:funlen,cyclop,gocognit
 	var grep stringFlags
 
 	flag.Var(&grep, "grep", "grep pattern, may contain multiple OR patterns separated by \\|,\n"+
 		"each -grep value is added with AND logic, akin to extra '| grep foo',\n"+
 		"for example, you can use '-grep bar\\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo")
+
 	parallel := flag.Int("parallel", 0, "number of parallel readers if multiple files are provided")
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")

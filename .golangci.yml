@@ -16,6 +16,8 @@ linters-settings:
     check-exported: false
   unparam:
     check-exported: true
+  funlen:
+    lines: 70
 
 linters:
   enable-all: true
