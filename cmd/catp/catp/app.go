@@ -52,6 +52,8 @@ func (r *runner) st(s progress.Status) string {
 
 	type progressJSON struct {
 		progress.Status
+		BytesCompleted     int64   `json:"bytes_completed"`
+		BytesTotal         int64   `json:"bytes_total"`
 		CurrentFilePercent float64 `json:"current_file_percent,omitempty"`
 		Matches            *int64  `json:"matches,omitempty"`
 		ElapsedSeconds     float64 `json:"elapsed_sec"`
@@ -83,6 +85,8 @@ func (r *runner) st(s progress.Status) string {
 	if r.progressJSON != "" {
 		pr.ElapsedSeconds = pr.Elapsed.Truncate(time.Second).Seconds()
 		pr.RemainingSeconds = pr.Remaining.Round(time.Second).Seconds()
+		pr.BytesCompleted = atomic.LoadInt64(&r.currentBytes)
+		pr.BytesTotal = atomic.LoadInt64(&r.totalBytes)
 
 		if j, err := json.Marshal(pr); err == nil {
 			if err = os.WriteFile(r.progressJSON, append(j, '\n'), 0o600); err != nil {
