@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ type runner struct {
 	sizes      map[string]int64
 	matches    int64
 	totalBytes int64
+	outDir     string
 
 	parallel     int
 	currentBytes int64
@@ -98,16 +100,16 @@ func (r *runner) st(s progress.Status) string {
 	return res
 }
 
-func (r *runner) readFile(rd io.Reader) {
+func (r *runner) readFile(rd io.Reader, out io.Writer) {
 	b := bufio.NewReaderSize(rd, 64*1024)
 
-	_, err := io.Copy(r.output, b)
+	_, err := io.Copy(out, b)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func (r *runner) scanFile(rd io.Reader) {
+func (r *runner) scanFile(rd io.Reader, out io.Writer) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
@@ -131,7 +133,7 @@ func (r *runner) scanFile(rd io.Reader) {
 			r.mu.Lock()
 		}
 
-		if _, err := r.output.Write(append(s.Bytes(), '\n')); err != nil {
+		if _, err := out.Write(append(s.Bytes(), '\n')); err != nil {
 			r.lastErr = err
 
 			if r.parallel > 1 {
@@ -180,7 +182,7 @@ func (r *runner) shouldWrite(line []byte) bool {
 	return shouldWrite
 }
 
-func (r *runner) cat(filename string) (err error) {
+func (r *runner) cat(filename string) (err error) { //nolint:funlen,cyclop
 	file, err := os.Open(filename) //nolint:gosec
 	if err != nil {
 		return err
@@ -209,6 +211,30 @@ func (r *runner) cat(filename string) (err error) {
 		return err
 	}
 
+	out := r.output
+
+	if r.outDir != "" {
+		fn := r.outDir + "/" + path.Base(filename)
+		if strings.HasSuffix(fn, ".gz") {
+			fn = strings.TrimSuffix(fn, ".gz")
+		} else {
+			fn = strings.TrimSuffix(fn, ".zst")
+		}
+
+		w, err := os.Create(fn) //nolint:gosec
+		if err != nil {
+			return err
+		}
+
+		defer func() {
+			if clErr := w.Close(); clErr != nil && err == nil {
+				err = clErr
+			}
+		}()
+
+		out = w
+	}
+
 	if r.parallel <= 1 {
 		r.pr.Start(func(t *progress.Task) {
 			t.TotalBytes = func() int64 {
@@ -224,9 +250,9 @@ func (r *runner) cat(filename string) (err error) {
 	}
 
 	if len(r.grep) > 0 {
-		r.scanFile(rd)
+		r.scanFile(rd, out)
 	} else {
-		r.readFile(rd)
+		r.readFile(rd, out)
 	}
 
 	cr.Close()
@@ -312,10 +338,15 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		"for example, you can use '-grep bar\\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo")
 
 	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided\n"+
+		"lines from different files will go to output simultaneously"+
 		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
+
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file instead of STDOUT")
+	outDir := flag.String("out-dir", "", "output to directory instead of STDOUT\n"+
+		"files will be written to out dir with original base names\n"+
+		"disables output flag")
 	noProgress := flag.Bool("no-progress", false, "disable progress printing")
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
@@ -337,14 +368,15 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 	r := &runner{}
 
 	r.parallel = *parallel
+	r.outDir = *outDir
 
-	if *output != "" { //nolint:nestif
+	if *output != "" && *outDir == "" { //nolint:nestif
 		out, err := os.Create(*output)
 		if err != nil {
 			return fmt.Errorf("failed to create output file %s: %w", *output, err)
 		}
 
-		w := bufio.NewWriterSize(out, 128*1024)
+		w := bufio.NewWriterSize(out, 64*1024)
 		r.output = w
 
 		defer func() {
@@ -357,7 +389,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 			}
 		}()
 	} else {
-		w := bufio.NewWriterSize(os.Stdout, 128*1024)
+		w := bufio.NewWriterSize(os.Stdout, 64*1024)
 		r.output = w
 
 		defer func() {
