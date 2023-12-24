@@ -34,6 +34,7 @@ jobs:
         uses: actions/checkout@v3
       - name: Build artifacts
         run: |
+          git fetch -t
           make release-assets
       - name: Upload linux_amd64.tar.gz
         if: hashFiles('linux_amd64.tar.gz') != ''

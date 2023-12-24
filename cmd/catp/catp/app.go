@@ -285,8 +285,6 @@ func (r *runner) cat(filename string) (err error) {
 		r.readFile(rd, out)
 	}
 
-	cr.Close()
-
 	if r.parallel <= 1 {
 		r.pr.Stop()
 	}
@@ -391,7 +389,8 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 	ver := flag.Bool("version", false, "print version and exit")
 
 	flag.Usage = func() {
-		fmt.Println("catp", version.Info().Version+",", version.Info().GoVersion, strings.Join(versionExtra, " "))
+		fmt.Println("catp", version.Module("github.com/bool64/progress").Version+",",
+			version.Info().GoVersion, strings.Join(versionExtra, " "))
 		fmt.Println()
 		fmt.Println("catp prints contents of files to STDOUT or dir/file output, \n" +
 			"while printing current progress status to STDERR. \n" +
