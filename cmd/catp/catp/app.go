@@ -182,7 +182,7 @@ func (r *runner) shouldWrite(line []byte) bool {
 	return shouldWrite
 }
 
-func (r *runner) cat(filename string) (err error) { //nolint:funlen,cyclop
+func (r *runner) cat(filename string) (err error) {
 	file, err := os.Open(filename) //nolint:gosec
 	if err != nil {
 		return err

@@ -7,6 +7,8 @@ on:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   GO_VERSION: '1.22.0-rc.1'
+  LINUX_AMD64_BUILD_OPTIONS: '-tags cgo_zstd'
+  GOAMD64: v3
 jobs:
   build:
     name: Upload Release Assets
