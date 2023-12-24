@@ -277,10 +277,10 @@ func (cr *sharedCounters) SetBytes(bytes *int64) {
 	cr.bytes = bytes
 }
 
-func (cr *sharedCounters) count(n int, p []byte) {
+func (cr *sharedCounters) count(n int, p []byte, err error) {
 	cr.localBytes += int64(n)
 
-	if cr.localBytes > 100000 && cr.bytes != nil {
+	if (err != nil || cr.localBytes > 100000) && cr.bytes != nil {
 		atomic.AddInt64(cr.bytes, cr.localBytes)
 		cr.localBytes = 0
 	}
@@ -293,7 +293,7 @@ func (cr *sharedCounters) count(n int, p []byte) {
 		if p[i] == '\n' {
 			cr.localLines++
 
-			if cr.localLines > 1000 {
+			if err != nil || cr.localLines > 1000 {
 				atomic.AddInt64(cr.lines, cr.localLines)
 				cr.localLines = 0
 			}
@@ -304,7 +304,7 @@ func (cr *sharedCounters) count(n int, p []byte) {
 // Read reads and counts bytes.
 func (cr *CountingReader) Read(p []byte) (n int, err error) {
 	n, err = cr.Reader.Read(p)
-	cr.count(n, p)
+	cr.count(n, p, err)
 
 	return n, err
 }
@@ -349,7 +349,7 @@ type CountingWriter struct {
 // Write writes and counts bytes.
 func (cr *CountingWriter) Write(p []byte) (n int, err error) {
 	n, err = cr.Writer.Write(p)
-	cr.count(n, p)
+	cr.count(n, p, err)
 
 	return n, err
 }

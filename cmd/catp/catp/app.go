@@ -285,8 +285,6 @@ func (r *runner) cat(filename string) (err error) {
 		r.readFile(rd, out)
 	}
 
-	cr.Close()
-
 	if r.parallel <= 1 {
 		r.pr.Stop()
 	}
