@@ -28,7 +28,6 @@ ifeq ($(DEVGO_PATH),)
 endif
 
 
-export CGO_ENABLED ?= 0
 BUILD_PKG = ./cmd/catp
 BUILD_LDFLAGS=-s -w
 

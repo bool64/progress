@@ -16,6 +16,10 @@ linters-settings:
     check-exported: false
   unparam:
     check-exported: true
+  funlen:
+    lines: 80
+  cyclop:
+    max-complexity: 15
 
 linters:
   enable-all: true
