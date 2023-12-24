@@ -292,12 +292,12 @@ func (cr *sharedCounters) count(n int, p []byte, err error) {
 	for i := 0; i < n; i++ {
 		if p[i] == '\n' {
 			cr.localLines++
-
-			if err != nil || cr.localLines > 1000 {
-				atomic.AddInt64(cr.lines, cr.localLines)
-				cr.localLines = 0
-			}
 		}
+	}
+
+	if err != nil || cr.localLines > 1000 {
+		atomic.AddInt64(cr.lines, cr.localLines)
+		cr.localLines = 0
 	}
 }
 
