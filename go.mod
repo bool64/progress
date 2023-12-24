@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/DataDog/zstd v1.5.5
-	github.com/bool64/dev v0.2.33-0.20231224002521-eccfe6cb66fc
+	github.com/bool64/dev v0.2.33-0.20231224003611-6aedc1b597c9
 	github.com/klauspost/compress v1.17.4
 	github.com/klauspost/pgzip v1.2.6
 )
