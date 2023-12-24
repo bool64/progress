@@ -23,6 +23,8 @@ import (
 	gzip "github.com/klauspost/pgzip"
 )
 
+var versionExtra []string
+
 type runner struct {
 	mu     sync.Mutex
 	output io.Writer
@@ -39,8 +41,10 @@ type runner struct {
 	currentBytes int64
 	currentLines int64
 
-	// grep is a slice of AND items, that are slices of OR items.
-	grep [][][]byte
+	// pass is a slice of OR items, that are slices of AND items.
+	pass [][][]byte
+	// skip is a slice of OR items, that are slices of AND items.
+	skip [][][]byte
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
@@ -78,7 +82,7 @@ func (r *runner) st(s progress.Status) string {
 			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
 	}
 
-	if r.grep != nil {
+	if len(r.pass) > 0 || len(r.skip) > 0 {
 		m := atomic.LoadInt64(&r.matches)
 		pr.Matches = &m
 		res += fmt.Sprintf(", matches %d", m)
@@ -159,20 +163,46 @@ func (r *runner) scanFile(rd io.Reader, out io.Writer) {
 }
 
 func (r *runner) shouldWrite(line []byte) bool {
-	shouldWrite := true
+	shouldWrite := false
 
-	for _, andGrep := range r.grep {
-		andPassed := false
+	if len(r.pass) == 0 {
+		shouldWrite = true
+	} else {
+		for _, orFilter := range r.pass {
+			orPassed := true
 
-		for _, orGrep := range andGrep {
-			if bytes.Contains(line, orGrep) {
-				andPassed = true
+			for _, andFilter := range orFilter {
+				if !bytes.Contains(line, andFilter) {
+					orPassed = false
+
+					break
+				}
+			}
+
+			if orPassed {
+				shouldWrite = true
+
+				break
+			}
+		}
+	}
+
+	if !shouldWrite {
+		return shouldWrite
+	}
+
+	for _, orFilter := range r.skip {
+		orPassed := true
+
+		for _, andFilter := range orFilter {
+			if !bytes.Contains(line, andFilter) {
+				orPassed = false
 
 				break
 			}
 		}
 
-		if !andPassed {
+		if orPassed {
 			shouldWrite = false
 
 			break
@@ -249,7 +279,7 @@ func (r *runner) cat(filename string) (err error) {
 		})
 	}
 
-	if len(r.grep) > 0 {
+	if len(r.pass) > 0 || len(r.skip) > 0 {
 		r.scanFile(rd, out)
 	} else {
 		r.readFile(rd, out)
@@ -331,14 +361,23 @@ func (i *stringFlags) Set(value string) error {
 
 // Main is the entry point for catp CLI tool.
 func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
-	var grep stringFlags
+	var (
+		pass stringFlags
+		skip stringFlags
+	)
 
-	flag.Var(&grep, "grep", "grep pattern, may contain multiple OR patterns separated by \\|,\n"+
-		"each -grep value is added with AND logic, akin to extra '| grep foo',\n"+
-		"for example, you can use '-grep bar\\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo")
+	flag.Var(&pass, "pass", "filter matching, may contain multiple AND patterns separated by ^,\n"+
+		"if filter matches, line is passed to the output (unless filtered out by -skip)\n"+
+		"each -pass value is added with OR logic,\n"+
+		"for example, you can use \"-pass bar^baz -pass foo\" to only keep lines that have (bar AND baz) OR foo")
+
+	flag.Var(&skip, "skip", "filter matching, may contain multiple AND patterns separated by ^,\n"+
+		"if filter matches, line is removed from the output (even if it passed -pass)\n"+
+		"each -skip value is added with OR logic,\n"+
+		"for example, you can use \"-skip quux^baz -skip fooO\" to skip lines that have (quux AND baz) OR fooO")
 
 	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided\n"+
-		"lines from different files will go to output simultaneously\n"+
+		"lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)\n"+
 		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
 
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
@@ -351,10 +390,27 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
 
+	flag.Usage = func() {
+		fmt.Println("catp", version.Info().Version+",", version.Info().GoVersion, strings.Join(versionExtra, " "))
+		fmt.Println()
+		fmt.Println("catp prints contents of files to STDOUT or dir/file output, \n" +
+			"while printing current progress status to STDERR. \n" +
+			"It can read decompressed data from .gz and .zst files.")
+		fmt.Println()
+		fmt.Println("Usage of catp:")
+		fmt.Println("catp [OPTIONS] PATH...")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
 	if *ver {
 		fmt.Println(version.Module("github.com/bool64/progress").Version)
+
+		return nil
+	}
+
+	if flag.NArg() == 0 {
+		flag.Usage()
 
 		return nil
 	}
@@ -399,14 +455,25 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		}()
 	}
 
-	if len(grep) > 0 {
-		for _, andGrep := range grep {
+	if len(pass) > 0 {
+		for _, orFilter := range pass {
 			var og [][]byte
-			for _, orGrep := range strings.Split(andGrep, "\\|") {
-				og = append(og, []byte(orGrep))
+			for _, andFilter := range strings.Split(orFilter, "^") {
+				og = append(og, []byte(andFilter))
 			}
 
-			r.grep = append(r.grep, og)
+			r.pass = append(r.pass, og)
+		}
+	}
+
+	if len(skip) > 0 {
+		for _, orFilter := range skip {
+			var og [][]byte
+			for _, andFilter := range strings.Split(orFilter, "^") {
+				og = append(og, []byte(andFilter))
+			}
+
+			r.skip = append(r.skip, og)
 		}
 	}
 
