@@ -37,7 +37,8 @@ Usage of catp:
         output to file instead of STDOUT
   -parallel int
         number of parallel readers if multiple files are provided
-        lines from different files will go to output simultaneouslyuse 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
+        lines from different files will go to output simultaneously
+        use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
   -progress-json string
         write current progress to a file
   -version

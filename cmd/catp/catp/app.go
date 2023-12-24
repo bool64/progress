@@ -338,7 +338,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		"for example, you can use '-grep bar\\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo")
 
 	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided\n"+
-		"lines from different files will go to output simultaneously"+
+		"lines from different files will go to output simultaneously\n"+
 		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
 
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
