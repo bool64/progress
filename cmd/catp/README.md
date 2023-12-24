@@ -21,10 +21,25 @@ wget https://github.com/bool64/progress/releases/latest/download/linux_amd64.tar
 Usage of catp:
   -dbg-cpu-prof string
         write first 10 seconds of CPU profile to file
-  -grep string
-        grep pattern, may contain multiple patterns separated by \|
+  -dbg-mem-prof string
+        write heap profile to file after 10 seconds
+  -grep value
+        grep pattern, may contain multiple OR patterns separated by \|,
+        each -grep value is added with AND logic, akin to extra '| grep foo',
+        for example, you can use '-grep bar\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo
+  -no-progress
+        disable progress printing
+  -out-dir string
+        output to directory instead of STDOUT
+        files will be written to out dir with original base names
+        disables output flag
   -output string
         output to file instead of STDOUT
+  -parallel int
+        number of parallel readers if multiple files are provided
+        lines from different files will go to output simultaneouslyuse 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
+  -progress-json string
+        write current progress to a file
   -version
         print version and exit
 ```
