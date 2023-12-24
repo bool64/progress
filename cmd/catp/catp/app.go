@@ -395,10 +395,10 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		fmt.Println()
 		fmt.Println("catp prints contents of files to STDOUT or dir/file output, \n" +
 			"while printing current progress status to STDERR. \n" +
-			"It can read decompressed data from .gz and .zst files.")
+			"It can decompress data from .gz and .zst files.")
 		fmt.Println()
 		fmt.Println("Usage of catp:")
-		fmt.Println("catp [OPTIONS] PATH...")
+		fmt.Println("catp [OPTIONS] PATH ...")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

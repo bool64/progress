@@ -18,36 +18,49 @@ wget https://github.com/bool64/progress/releases/latest/download/linux_amd64.tar
 ## Usage
 
 ```
+catp dev, go1.22rc1 CGO_ZSTD
+
+catp prints contents of files to STDOUT or dir/file output,
+while printing current progress status to STDERR.
+It can decompress data from .gz and .zst files.
+
 Usage of catp:
+catp [OPTIONS] PATH ...
   -dbg-cpu-prof string
-        write first 10 seconds of CPU profile to file
+    	write first 10 seconds of CPU profile to file
   -dbg-mem-prof string
-        write heap profile to file after 10 seconds
-  -grep value
-        grep pattern, may contain multiple OR patterns separated by \|,
-        each -grep value is added with AND logic, akin to extra '| grep foo',
-        for example, you can use '-grep bar\|baz -grep foo' to only keep lines that have (bar OR baz) AND foo
+    	write heap profile to file after 10 seconds
   -no-progress
-        disable progress printing
+    	disable progress printing
   -out-dir string
-        output to directory instead of STDOUT
-        files will be written to out dir with original base names
-        disables output flag
+    	output to directory instead of STDOUT
+    	files will be written to out dir with original base names
+    	disables output flag
   -output string
-        output to file instead of STDOUT
+    	output to file instead of STDOUT
   -parallel int
-        number of parallel readers if multiple files are provided
-        lines from different files will go to output simultaneously
-        use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
+    	number of parallel readers if multiple files are provided
+    	lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)
+    	use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
+  -pass value
+    	filter matching, may contain multiple AND patterns separated by ^,
+    	if filter matches, line is passed to the output (unless filtered out by -skip)
+    	each -pass value is added with OR logic,
+    	for example, you can use "-pass bar^baz -pass foo" to only keep lines that have (bar AND baz) OR foo
   -progress-json string
-        write current progress to a file
+    	write current progress to a file
+  -skip value
+    	filter matching, may contain multiple AND patterns separated by ^,
+    	if filter matches, line is removed from the output (even if it passed -pass)
+    	each -skip value is added with OR logic,
+    	for example, you can use "-skip quux^baz -skip fooO" to skip lines that have (quux AND baz) OR fooO
   -version
-        print version and exit
+    	print version and exit
 ```
 
 ## Examples
 
-Feed a file into `jq` field extractor.
+Feed a file into `jq` field extractor with progress printing.
 
 ```
 catp get-key.log | jq .context.callback.Data.Nonce > get-key.jq
@@ -65,7 +78,7 @@ Run log filtering (lines containing `foo bar` or `baz`) on multiple files in bac
 new file.
 
 ```
-screen -dmS foo12 ./catp -output ~/foo-2023-07-12.log -grep "foo bar\|baz" /home/logs/server-2023-07-12*
+screen -dmS foo12 ./catp -output ~/foo-2023-07-12.log -pass "foo bar" -pass "baz" /home/logs/server-2023-07-12*
 ```
 
 ```
