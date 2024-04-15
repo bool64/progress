@@ -279,7 +279,7 @@ func (r *runner) cat(filename string) (err error) {
 		})
 	}
 
-	if len(r.pass) > 0 || len(r.skip) > 0 {
+	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 {
 		r.scanFile(rd, out)
 	} else {
 		r.readFile(rd, out)
@@ -364,6 +364,8 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		skip stringFlags
 	)
 
+	r := &runner{}
+
 	flag.Var(&pass, "pass", "filter matching, may contain multiple AND patterns separated by ^,\n"+
 		"if filter matches, line is passed to the output (unless filtered out by -skip)\n"+
 		"each -pass value is added with OR logic,\n"+
@@ -374,19 +376,20 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		"each -skip value is added with OR logic,\n"+
 		"for example, you can use \"-skip quux^baz -skip fooO\" to skip lines that have (quux AND baz) OR fooO")
 
-	parallel := flag.Int("parallel", 1, "number of parallel readers if multiple files are provided\n"+
+	flag.IntVar(&r.parallel, "parallel", 1, "number of parallel readers if multiple files are provided\n"+
 		"lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)\n"+
 		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
 
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file instead of STDOUT")
-	outDir := flag.String("out-dir", "", "output to directory instead of STDOUT\n"+
-		"files will be written to out dir with original base names\n"+
-		"disables output flag")
 	noProgress := flag.Bool("no-progress", false, "disable progress printing")
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
+
+	flag.StringVar(&r.outDir, "out-dir", "", "output to directory instead of STDOUT\n"+
+		"files will be written to out dir with original base names\n"+
+		"disables output flag")
 
 	flag.Usage = func() {
 		fmt.Println("catp", version.Module("github.com/bool64/progress").Version+",",
@@ -420,12 +423,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		defer pprof.StopCPUProfile()
 	}
 
-	r := &runner{}
-
-	r.parallel = *parallel
-	r.outDir = *outDir
-
-	if *output != "" && *outDir == "" { //nolint:nestif
+	if *output != "" && r.outDir == "" { //nolint:nestif
 		out, err := os.Create(*output)
 		if err != nil {
 			return fmt.Errorf("failed to create output file %s: %w", *output, err)
@@ -503,7 +501,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 		r.sizes[fn] = st.Size()
 	}
 
-	if *parallel >= 2 {
+	if r.parallel >= 2 {
 		pr := r.pr
 		pr.Start(func(t *progress.Task) {
 			t.TotalBytes = func() int64 { return r.totalBytes }
@@ -513,7 +511,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 			t.PrintOnStart = true
 		})
 
-		sem := make(chan struct{}, *parallel)
+		sem := make(chan struct{}, r.parallel)
 		errs := make(chan error, 1)
 
 		for i := 0; i < flag.NArg(); i++ {
