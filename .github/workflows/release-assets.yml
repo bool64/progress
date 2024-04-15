@@ -8,13 +8,13 @@ on:
       - created
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  GO_VERSION: '1.22.0-rc.1'
+  GO_VERSION: 1.22.x
   LINUX_AMD64_BUILD_OPTIONS: '-tags cgo_zstd'
   GOAMD64: v3
 jobs:
   build:
     name: Upload Release Assets
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: Install Go stable
         if: env.GO_VERSION != 'tip'
