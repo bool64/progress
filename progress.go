@@ -216,6 +216,7 @@ func (p *Progress) speedStatus(s *Status) {
 
 		if s.DonePercent > 0 {
 			s.Remaining = time.Duration((100.0 - s.DonePercent) * float64(ela) / dc)
+			s.Remaining = s.Remaining.Truncate(time.Second)
 		} else {
 			s.Remaining = 0
 		}
