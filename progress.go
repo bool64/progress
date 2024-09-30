@@ -200,12 +200,26 @@ func (p *Progress) Reset() {
 }
 
 func (p *Progress) speedStatus(s *Status) {
-	if p.IncrementalSpeed {
-		lc := s.LinesCompleted - p.prevStatus.LinesCompleted
-		bc := s.BytesCompleted - p.prevStatus.BytesCompleted
-		dc := s.DonePercent - p.prevStatus.DonePercent
-		ela := s.Elapsed - p.prevStatus.Elapsed
+	if !p.IncrementalSpeed {
+		s.SpeedMBPS = (float64(s.BytesCompleted) / s.Elapsed.Seconds()) / (1024 * 1024)
+		s.SpeedLPS = float64(s.LinesCompleted) / s.Elapsed.Seconds()
 
+		if s.DonePercent > 0 {
+			s.Remaining = time.Duration(float64(100*s.Elapsed)/s.DonePercent) - s.Elapsed
+			s.Remaining = s.Remaining.Truncate(time.Second)
+		} else {
+			s.Remaining = 0
+		}
+
+		return
+	}
+
+	lc := s.LinesCompleted - p.prevStatus.LinesCompleted
+	bc := s.BytesCompleted - p.prevStatus.BytesCompleted
+	dc := s.DonePercent - p.prevStatus.DonePercent
+	ela := s.Elapsed - p.prevStatus.Elapsed
+
+	if ela != 0 {
 		if lc > 0 {
 			s.SpeedLPS = float64(lc) / ela.Seconds()
 		}
@@ -213,28 +227,16 @@ func (p *Progress) speedStatus(s *Status) {
 		if bc > 0 {
 			s.SpeedMBPS = (float64(bc) / ela.Seconds()) / (1024 * 1024)
 		}
-
-		if s.DonePercent > 0 {
-			s.Remaining = time.Duration((100.0 - s.DonePercent) * float64(ela) / dc)
-			s.Remaining = s.Remaining.Truncate(time.Second)
-		} else {
-			s.Remaining = 0
-		}
-
-		p.prevStatus = *s
-
-		return
 	}
 
-	s.SpeedMBPS = (float64(s.BytesCompleted) / s.Elapsed.Seconds()) / (1024 * 1024)
-	s.SpeedLPS = float64(s.LinesCompleted) / s.Elapsed.Seconds()
-
-	if s.DonePercent > 0 {
-		s.Remaining = time.Duration(float64(100*s.Elapsed)/s.DonePercent) - s.Elapsed
+	if dc > 0 {
+		s.Remaining = time.Duration((100.0 - s.DonePercent) * float64(ela) / dc)
 		s.Remaining = s.Remaining.Truncate(time.Second)
 	} else {
 		s.Remaining = 0
 	}
+
+	p.prevStatus = *s
 }
 
 func (p *Progress) printStatus(last bool) {
