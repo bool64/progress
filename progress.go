@@ -14,6 +14,7 @@ type Status struct {
 	Task           string        `json:"task"`
 	DonePercent    float64       `json:"done_percent"`
 	LinesCompleted int64         `json:"lines_completed"`
+	BytesCompleted int64         `json:"bytes_completed"`
 	SpeedMBPS      float64       `json:"speed_mbps"`
 	SpeedLPS       float64       `json:"speed_lps"`
 	Elapsed        time.Duration `json:"-"`
@@ -27,13 +28,20 @@ type Progress struct {
 	Print          func(status Status)
 	ShowHeapStats  bool
 	ShowLinesStats bool
-	done           chan bool
-	task           Task
-	lines          func() int64
-	current        func() int64
-	tot            func() int64
-	prnt           func(s Status)
-	start          time.Time
+
+	// IncrementalSpeed shows speed and remaining estimate based on performance between two status updates.
+	IncrementalSpeed bool
+
+	done    chan bool
+	task    Task
+	lines   func() int64
+	current func() int64
+	tot     func() int64
+	prnt    func(s Status)
+	start   time.Time
+
+	prevStatus Status
+
 	continuedLines int64
 	continuedBytes int64
 	metrics        []Metric
@@ -191,16 +199,33 @@ func (p *Progress) Reset() {
 	p.metrics = nil
 }
 
-func (p *Progress) printStatus(last bool) {
-	s := Status{}
-	s.Task = p.task.Task
-	s.LinesCompleted = p.Lines()
-	s.Metrics = p.metrics
+func (p *Progress) speedStatus(s *Status) {
+	if p.IncrementalSpeed {
+		lc := s.LinesCompleted - p.prevStatus.LinesCompleted
+		bc := s.BytesCompleted - p.prevStatus.BytesCompleted
+		dc := s.DonePercent - p.prevStatus.DonePercent
+		ela := s.Elapsed - p.prevStatus.Elapsed
 
-	b := float64(p.Bytes())
-	s.DonePercent = 100 * b / float64(p.tot())
-	s.Elapsed = time.Since(p.start)
-	s.SpeedMBPS = (b / s.Elapsed.Seconds()) / (1024 * 1024)
+		if lc > 0 {
+			s.SpeedLPS = float64(lc) / ela.Seconds()
+		}
+
+		if bc > 0 {
+			s.SpeedMBPS = (float64(bc) / ela.Seconds()) / (1024 * 1024)
+		}
+
+		if s.DonePercent > 0 {
+			s.Remaining = time.Duration((100.0 - s.DonePercent) * float64(ela) / dc)
+		} else {
+			s.Remaining = 0
+		}
+
+		p.prevStatus = *s
+
+		return
+	}
+
+	s.SpeedMBPS = (float64(s.BytesCompleted) / s.Elapsed.Seconds()) / (1024 * 1024)
 	s.SpeedLPS = float64(s.LinesCompleted) / s.Elapsed.Seconds()
 
 	if s.DonePercent > 0 {
@@ -209,6 +234,18 @@ func (p *Progress) printStatus(last bool) {
 	} else {
 		s.Remaining = 0
 	}
+}
+
+func (p *Progress) printStatus(last bool) {
+	s := Status{}
+	s.Task = p.task.Task
+	s.LinesCompleted = p.Lines()
+	s.BytesCompleted = p.Bytes()
+	s.Metrics = p.metrics
+	s.Elapsed = time.Since(p.start)
+	s.DonePercent = 100 * float64(s.BytesCompleted) / float64(p.tot())
+
+	p.speedStatus(&s)
 
 	if s.Remaining > 100*time.Millisecond || s.Remaining == 0 || last {
 		p.prnt(s)
