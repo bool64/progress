@@ -54,6 +54,8 @@ type runner struct {
 	lastErr               error
 	lastStatusTime        int64
 	lastBytesUncompressed int64
+
+	noProgress bool
 }
 
 // st renders Status as a string.
@@ -80,13 +82,25 @@ func (r *runner) st(s progress.Status) string {
 	if len(r.sizes) > 1 && r.parallel <= 1 {
 		pr.CurrentFilePercent = 100 * float64(r.currentFile.Bytes()) / float64(r.currentTotal)
 
-		res = fmt.Sprintf("all: %.1f%% bytes read, %s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
-			s.DonePercent, s.Task, pr.CurrentFilePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
-			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+		if s.LinesCompleted != 0 {
+			res = fmt.Sprintf("all: %.1f%% bytes read, %s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
+				s.DonePercent, s.Task, pr.CurrentFilePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
+				s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+		} else {
+			res = fmt.Sprintf("all: %.1f%% bytes read, %s: %.1f%% bytes read, %.1f MB/s, elapsed %s, remaining %s",
+				s.DonePercent, s.Task, pr.CurrentFilePercent, s.SpeedMBPS,
+				s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+		}
 	} else {
-		res = fmt.Sprintf("%s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
-			s.Task, s.DonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
-			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+		if s.LinesCompleted != 0 {
+			res = fmt.Sprintf("%s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
+				s.Task, s.DonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
+				s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+		} else {
+			res = fmt.Sprintf("%s: %.1f%% bytes read, %.1f MB/s, elapsed %s, remaining %s",
+				s.Task, s.DonePercent, s.SpeedMBPS,
+				s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+		}
 	}
 
 	if currentBytesUncompressed > currentBytes {
@@ -123,6 +137,15 @@ func (r *runner) st(s progress.Status) string {
 	}
 
 	return res
+}
+
+func (r *runner) readFile(rd io.Reader, out io.Writer) {
+	b := bufio.NewReaderSize(rd, 64*1024)
+
+	_, err := io.Copy(out, b)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func (r *runner) scanFile(rd io.Reader, out io.Writer) {
@@ -236,30 +259,35 @@ func (r *runner) cat(filename string) (err error) {
 		}
 	}()
 
-	cr := progress.NewCountingReader(file)
-	cr.SetBytes(&r.currentBytes)
-	cr.SetLines(nil)
+	rd := io.Reader(file)
 
-	if r.parallel <= 1 {
-		cr = progress.NewCountingReader(file)
+	if !r.noProgress {
+		cr := progress.NewCountingReader(file)
+		cr.SetBytes(&r.currentBytes)
 		cr.SetLines(nil)
-		r.currentFile = cr
-		r.currentTotal = r.sizes[filename]
-	}
 
-	rd := io.Reader(cr)
+		if r.parallel <= 1 {
+			cr = progress.NewCountingReader(file)
+			cr.SetLines(nil)
+			r.currentFile = cr
+			r.currentTotal = r.sizes[filename]
+		}
+
+		rd = cr
+	}
 
 	if rd, err = r.openReader(rd, filename); err != nil {
 		return err
 	}
 
-	crl := progress.NewCountingReader(rd)
+	if !r.noProgress {
+		crl := progress.NewCountingReader(rd)
 
-	crl.SetBytes(&r.currentBytesUncompressed)
-	crl.SetLines(&r.currentLines)
-	crl.SetLines(nil)
+		crl.SetBytes(&r.currentBytesUncompressed)
+		crl.SetLines(nil)
 
-	rd = crl
+		rd = crl
+	}
 
 	out := r.output
 
@@ -285,7 +313,7 @@ func (r *runner) cat(filename string) (err error) {
 		out = w
 	}
 
-	if r.parallel <= 1 {
+	if r.parallel <= 1 && !r.noProgress {
 		r.pr.Start(func(t *progress.Task) {
 			t.TotalBytes = func() int64 {
 				return r.totalBytes
@@ -299,9 +327,13 @@ func (r *runner) cat(filename string) (err error) {
 		})
 	}
 
-	r.scanFile(rd, out)
+	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 {
+		r.scanFile(rd, out)
+	} else {
+		r.readFile(rd, out)
+	}
 
-	if r.parallel <= 1 {
+	if r.parallel <= 1 && !r.noProgress {
 		r.pr.Stop()
 	}
 
@@ -399,7 +431,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
-	noProgress := flag.Bool("no-progress", false, "disable progress printing")
+	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
 
@@ -523,7 +555,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 		Print: func(status progress.Status) {
 			s := r.st(status)
 
-			if *noProgress {
+			if r.noProgress {
 				return
 			}
 
@@ -581,6 +613,12 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 		}
 
 		pr.Stop()
+
+		close(errs)
+
+		if err := <-errs; err != nil {
+			return err
+		}
 	} else {
 		for i := 0; i < flag.NArg(); i++ {
 			if err := r.cat(flag.Arg(i)); err != nil {
