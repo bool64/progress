@@ -16,3 +16,7 @@ func zstdReader(rd io.Reader) (io.Reader, error) {
 		return nil, fmt.Errorf("failed to init zst reader: %w", err)
 	}
 }
+
+func zstdWriter(w io.Writer) (io.WriteCloser, error) {
+	return zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithLowerEncoderMem(true))
+}

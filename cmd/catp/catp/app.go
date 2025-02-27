@@ -37,9 +37,11 @@ type runner struct {
 	totalBytes int64
 	outDir     string
 
-	parallel     int
-	currentBytes int64
-	currentLines int64
+	parallel int
+
+	currentBytes             int64
+	currentBytesUncompressed int64
+	currentLines             int64
 
 	// pass is a slice of OR items, that are slices of AND items.
 	pass [][][]byte
@@ -49,7 +51,9 @@ type runner struct {
 	currentFile  *progress.CountingReader
 	currentTotal int64
 
-	lastErr error
+	lastErr               error
+	lastStatusTime        int64
+	lastBytesUncompressed int64
 }
 
 // st renders Status as a string.
@@ -70,6 +74,9 @@ func (r *runner) st(s progress.Status) string {
 		Status: s,
 	}
 
+	currentBytesUncompressed := atomic.LoadInt64(&r.currentBytesUncompressed)
+	currentBytes := atomic.LoadInt64(&r.currentBytes)
+
 	if len(r.sizes) > 1 && r.parallel <= 1 {
 		pr.CurrentFilePercent = 100 * float64(r.currentFile.Bytes()) / float64(r.currentTotal)
 
@@ -82,6 +89,20 @@ func (r *runner) st(s progress.Status) string {
 			s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
 	}
 
+	if currentBytesUncompressed > currentBytes {
+		lastBytesUncompressed := atomic.LoadInt64(&r.lastBytesUncompressed)
+		lastStatusTime := atomic.LoadInt64(&r.lastStatusTime)
+		now := time.Now().Unix()
+
+		if lastBytesUncompressed != 0 && lastStatusTime != 0 && lastStatusTime != now {
+			spdMPBS := (float64(currentBytesUncompressed-lastBytesUncompressed) / float64(now-lastStatusTime)) / (1024 * 1024)
+			res = strings.ReplaceAll(res, "MB/s", fmt.Sprintf("MB/s (uncomp %.1f MB/s)", spdMPBS))
+		}
+
+		atomic.StoreInt64(&r.lastStatusTime, now)
+		atomic.StoreInt64(&r.lastBytesUncompressed, currentBytesUncompressed)
+	}
+
 	if len(r.pass) > 0 || len(r.skip) > 0 {
 		m := atomic.LoadInt64(&r.matches)
 		pr.Matches = &m
@@ -91,7 +112,7 @@ func (r *runner) st(s progress.Status) string {
 	if r.progressJSON != "" {
 		pr.ElapsedSeconds = pr.Elapsed.Truncate(time.Second).Seconds()
 		pr.RemainingSeconds = pr.Remaining.Round(time.Second).Seconds()
-		pr.BytesCompleted = atomic.LoadInt64(&r.currentBytes)
+		pr.BytesCompleted = currentBytes
 		pr.BytesTotal = atomic.LoadInt64(&r.totalBytes)
 
 		if j, err := json.Marshal(pr); err == nil {
@@ -241,6 +262,13 @@ func (r *runner) cat(filename string) (err error) {
 		return err
 	}
 
+	crl := progress.NewCountingReader(rd)
+
+	crl.SetBytes(&r.currentBytesUncompressed)
+	crl.SetLines(&r.currentLines)
+
+	rd = crl
+
 	out := r.output
 
 	if r.outDir != "" {
@@ -358,7 +386,7 @@ func (i *stringFlags) Set(value string) error {
 }
 
 // Main is the entry point for catp CLI tool.
-func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
+func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 	var (
 		pass stringFlags
 		skip stringFlags
@@ -382,7 +410,7 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
-	output := flag.String("output", "", "output to file instead of STDOUT")
+	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
 	noProgress := flag.Bool("no-progress", false, "disable progress printing")
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
@@ -424,17 +452,43 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo
 	}
 
 	if *output != "" && r.outDir == "" { //nolint:nestif
-		out, err := os.Create(*output)
+		fn := *output
+
+		out, err := os.Create(fn) //nolint:gosec
 		if err != nil {
-			return fmt.Errorf("failed to create output file %s: %w", *output, err)
+			return fmt.Errorf("failed to create output file %s: %w", fn, err)
 		}
 
-		w := bufio.NewWriterSize(out, 64*1024)
+		r.output = out
+		compCloser := io.Closer(io.NopCloser(nil))
+
+		switch {
+		case strings.HasSuffix(fn, ".gz"):
+			gw := gzip.NewWriter(r.output)
+			compCloser = gw
+
+			r.output = gw
+		case strings.HasSuffix(fn, ".zst"):
+			zw, err := zstdWriter(r.output)
+			if err != nil {
+				return fmt.Errorf("zstd new writer: %w", err)
+			}
+
+			compCloser = zw
+
+			r.output = zw
+		}
+
+		w := bufio.NewWriterSize(r.output, 64*1024)
 		r.output = w
 
 		defer func() {
 			if err := w.Flush(); err != nil {
 				log.Fatalf("failed to flush STDOUT buffer: %s", err)
+			}
+
+			if err := compCloser.Close(); err != nil {
+				log.Fatalf("failed to close compressor: %s", err)
 			}
 
 			if err := out.Close(); err != nil {
