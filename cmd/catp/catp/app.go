@@ -125,15 +125,6 @@ func (r *runner) st(s progress.Status) string {
 	return res
 }
 
-func (r *runner) readFile(rd io.Reader, out io.Writer) {
-	b := bufio.NewReaderSize(rd, 64*1024)
-
-	_, err := io.Copy(out, b)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
 func (r *runner) scanFile(rd io.Reader, out io.Writer) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
@@ -266,6 +257,7 @@ func (r *runner) cat(filename string) (err error) {
 
 	crl.SetBytes(&r.currentBytesUncompressed)
 	crl.SetLines(&r.currentLines)
+	crl.SetLines(nil)
 
 	rd = crl
 
@@ -307,11 +299,7 @@ func (r *runner) cat(filename string) (err error) {
 		})
 	}
 
-	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 {
-		r.scanFile(rd, out)
-	} else {
-		r.readFile(rd, out)
-	}
+	r.scanFile(rd, out)
 
 	if r.parallel <= 1 {
 		r.pr.Stop()
