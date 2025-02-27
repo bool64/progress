@@ -15,3 +15,7 @@ func init() {
 func zstdReader(rd io.Reader) (io.Reader, error) {
 	return zstd.NewReader(rd), nil
 }
+
+func zstdWriter(w io.Writer) (io.WriteCloser, error) {
+	return zstd.NewWriterLevel(w, zstd.BestSpeed), nil
+}
