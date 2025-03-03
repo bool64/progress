@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,6 +25,8 @@ type Status struct {
 
 // Progress reports reading performance.
 type Progress struct {
+	mu sync.Mutex
+
 	Interval       time.Duration
 	Print          func(status Status)
 	ShowHeapStats  bool
@@ -240,6 +243,9 @@ func (p *Progress) speedStatus(s *Status) {
 }
 
 func (p *Progress) printStatus(last bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	s := Status{}
 	s.Task = p.task.Task
 	s.LinesCompleted = p.Lines()

@@ -5,12 +5,14 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -551,7 +553,8 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 	r.sizes = make(map[string]int64)
 	r.progressJSON = *progressJSON
 	r.pr = &progress.Progress{
-		Interval: 5 * time.Second,
+		Interval:         5 * time.Second,
+		IncrementalSpeed: true,
 		Print: func(status progress.Status) {
 			s := r.st(status)
 
@@ -563,9 +566,32 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 		},
 	}
 
-	for i := 0; i < flag.NArg(); i++ {
-		fn := flag.Arg(i)
+	var files []string
 
+	for _, f := range flag.Args() {
+		glob, err := filepath.Glob(f)
+		if err != nil {
+			return err
+		}
+
+		for _, f := range glob {
+			alreadyThere := false
+
+			for _, e := range files {
+				if e == f {
+					alreadyThere = true
+
+					break
+				}
+			}
+
+			if !alreadyThere {
+				files = append(files, f)
+			}
+		}
+	}
+
+	for _, fn := range files {
 		st, err := os.Stat(fn)
 		if err != nil {
 			return fmt.Errorf("failed to read file stats %s: %w", fn, err)
@@ -586,10 +612,11 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 		})
 
 		sem := make(chan struct{}, r.parallel)
-		errs := make(chan error, 1)
+		errs := make(chan error, r.parallel)
 
-		for i := 0; i < flag.NArg(); i++ {
-			i := i
+		for _, fn := range files {
+			fn := fn
+
 			select {
 			case err := <-errs:
 				return err
@@ -601,8 +628,8 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 					<-sem
 				}()
 
-				if err := r.cat(flag.Arg(i)); err != nil {
-					errs <- err
+				if err := r.cat(fn); err != nil {
+					errs <- fmt.Errorf("%s: %w", fn, err)
 				}
 			}()
 		}
@@ -616,13 +643,21 @@ func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 
 		close(errs)
 
-		if err := <-errs; err != nil {
-			return err
+		var errValues []error
+
+		for err := range errs {
+			if err != nil {
+				errValues = append(errValues, err)
+			}
+		}
+
+		if errValues != nil {
+			return errors.Join(errValues...)
 		}
 	} else {
-		for i := 0; i < flag.NArg(); i++ {
-			if err := r.cat(flag.Arg(i)); err != nil {
-				return err
+		for _, fn := range files {
+			if err := r.cat(fn); err != nil {
+				return fmt.Errorf("%s: %w", fn, err)
 			}
 		}
 	}
