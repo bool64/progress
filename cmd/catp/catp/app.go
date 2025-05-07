@@ -58,6 +58,9 @@ type runner struct {
 	lastBytesUncompressed int64
 
 	noProgress bool
+
+	hasOptions bool
+	options    Options
 }
 
 // st renders Status as a string.
@@ -150,7 +153,7 @@ func (r *runner) readFile(rd io.Reader, out io.Writer) {
 	}
 }
 
-func (r *runner) scanFile(rd io.Reader, out io.Writer) {
+func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
@@ -164,8 +167,20 @@ func (r *runner) scanFile(rd io.Reader, out io.Writer) {
 			lines = 0
 		}
 
-		if !r.shouldWrite(s.Bytes()) {
+		line := s.Bytes()
+
+		if !r.shouldWrite(line) {
 			continue
+		}
+
+		if r.hasOptions {
+			if r.options.PrepareLine != nil {
+				line = r.options.PrepareLine(filename, lines, line)
+			}
+
+			if line == nil {
+				continue
+			}
 		}
 
 		atomic.AddInt64(&r.matches, 1)
@@ -174,7 +189,7 @@ func (r *runner) scanFile(rd io.Reader, out io.Writer) {
 			r.mu.Lock()
 		}
 
-		if _, err := out.Write(append(s.Bytes(), '\n')); err != nil {
+		if _, err := out.Write(append(line, '\n')); err != nil {
 			r.lastErr = err
 
 			if r.parallel > 1 && r.outDir == "" {
@@ -249,7 +264,7 @@ func (r *runner) shouldWrite(line []byte) bool {
 	return shouldWrite
 }
 
-func (r *runner) cat(filename string) (err error) {
+func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 	file, err := os.Open(filename) //nolint:gosec
 	if err != nil {
 		return err
@@ -329,8 +344,8 @@ func (r *runner) cat(filename string) (err error) {
 		})
 	}
 
-	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 {
-		r.scanFile(rd, out)
+	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 || r.hasOptions {
+		r.scanFile(filename, rd, out)
 	} else {
 		r.readFile(rd, out)
 	}
@@ -407,14 +422,28 @@ func (i *stringFlags) Set(value string) error {
 	return nil
 }
 
+// Options allows behavior customisations.
+type Options struct {
+	// PrepareLine is invoked for every line, if result is nil, line is skipped.
+	PrepareLine func(filename string, lineNr int, line []byte) []byte
+}
+
 // Main is the entry point for catp CLI tool.
-func Main() error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
+func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 	var (
 		pass stringFlags
 		skip stringFlags
 	)
 
 	r := &runner{}
+
+	if len(options) > 0 {
+		r.hasOptions = true
+
+		for _, opt := range options {
+			opt(&r.options)
+		}
+	}
 
 	flag.Var(&pass, "pass", "filter matching, may contain multiple AND patterns separated by ^,\n"+
 		"if filter matches, line is passed to the output (unless filtered out by -skip)\n"+
