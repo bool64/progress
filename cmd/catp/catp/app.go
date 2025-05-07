@@ -122,7 +122,7 @@ func (r *runner) st(s progress.Status) string {
 		atomic.StoreInt64(&r.lastBytesUncompressed, currentBytesUncompressed)
 	}
 
-	if len(r.pass) > 0 || len(r.skip) > 0 {
+	if len(r.pass) > 0 || len(r.skip) > 0 || r.options.PrepareLine != nil {
 		m := atomic.LoadInt64(&r.matches)
 		pr.Matches = &m
 		res += fmt.Sprintf(", matches %d", m)
