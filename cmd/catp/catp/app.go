@@ -550,6 +550,39 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		}
 	}
 
+	var files []string
+
+	args := flag.Args()
+	isStdin := false
+
+	if len(args) == 1 && args[0] == "-" {
+		files = append(files, "-") // STDIN
+		isStdin = true
+	} else {
+		for _, f := range args {
+			glob, err := filepath.Glob(f)
+			if err != nil {
+				return err
+			}
+
+			for _, f := range glob {
+				alreadyThere := false
+
+				for _, e := range files {
+					if e == f {
+						alreadyThere = true
+
+						break
+					}
+				}
+
+				if !alreadyThere {
+					files = append(files, f)
+				}
+			}
+		}
+	}
+
 	if *output != "" && r.outDir == "" { //nolint:nestif
 		fn := *output
 
@@ -595,14 +628,18 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 			}
 		}()
 	} else {
-		w := bufio.NewWriterSize(os.Stdout, 64*1024)
-		r.output = w
+		if isStdin {
+			r.output = os.Stdout
+		} else {
+			w := bufio.NewWriterSize(os.Stdout, 64*1024)
+			r.output = w
 
-		defer func() {
-			if err := w.Flush(); err != nil {
-				log.Fatalf("failed to flush STDOUT buffer: %s", err)
-			}
-		}()
+			defer func() {
+				if err := w.Flush(); err != nil {
+					log.Fatalf("failed to flush STDOUT buffer: %s", err)
+				}
+			}()
+		}
 	}
 
 	if len(pass) > 0 {
@@ -641,37 +678,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 
 			println(s)
 		},
-	}
-
-	var files []string
-
-	args := flag.Args()
-
-	if len(args) == 1 && args[0] == "-" {
-		files = append(files, "-") // STDIN
-	} else {
-		for _, f := range args {
-			glob, err := filepath.Glob(f)
-			if err != nil {
-				return err
-			}
-
-			for _, f := range glob {
-				alreadyThere := false
-
-				for _, e := range files {
-					if e == f {
-						alreadyThere = true
-
-						break
-					}
-				}
-
-				if !alreadyThere {
-					files = append(files, f)
-				}
-			}
-		}
 	}
 
 	for _, fn := range files {
