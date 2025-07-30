@@ -61,6 +61,32 @@ type runner struct {
 
 	hasOptions bool
 	options    Options
+
+	hasCompression bool
+}
+
+// humanReadableBytes converts bytes to a human-readable string (TB, GB, MB, KB, or bytes).
+func humanReadableBytes(bytes int64) string {
+	const (
+		Byte  = 1
+		KByte = Byte * 1024
+		MByte = KByte * 1024
+		GByte = MByte * 1024
+		TByte = GByte * 1024
+	)
+
+	switch {
+	case bytes >= TByte:
+		return fmt.Sprintf("%.2f TB", float64(bytes)/float64(TByte))
+	case bytes >= GByte:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GByte))
+	case bytes >= MByte:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MByte))
+	case bytes >= KByte:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KByte))
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
 }
 
 // st renders Status as a string.
@@ -98,17 +124,29 @@ func (r *runner) st(s progress.Status) string {
 		}
 	} else {
 		if s.LinesCompleted != 0 {
-			res = fmt.Sprintf("%s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
-				s.Task, s.DonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
-				s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+			if r.totalBytes == -1 { // STDIN
+				res = fmt.Sprintf("%s read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s",
+					humanReadableBytes(s.BytesCompleted), s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
+					s.Elapsed.Round(10*time.Millisecond).String())
+			} else {
+				res = fmt.Sprintf("%s: %.1f%% bytes read, %d lines processed, %.1f l/s, %.1f MB/s, elapsed %s, remaining %s",
+					s.Task, s.DonePercent, s.LinesCompleted, s.SpeedLPS, s.SpeedMBPS,
+					s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+			}
 		} else {
-			res = fmt.Sprintf("%s: %.1f%% bytes read, %.1f MB/s, elapsed %s, remaining %s",
-				s.Task, s.DonePercent, s.SpeedMBPS,
-				s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+			if r.totalBytes == -1 {
+				res = fmt.Sprintf("%s read, %.1f MB/s, elapsed %s",
+					humanReadableBytes(s.BytesCompleted), s.SpeedMBPS,
+					s.Elapsed.Round(10*time.Millisecond).String())
+			} else {
+				res = fmt.Sprintf("%s: %.1f%% bytes read, %.1f MB/s, elapsed %s, remaining %s",
+					s.Task, s.DonePercent, s.SpeedMBPS,
+					s.Elapsed.Round(10*time.Millisecond).String(), s.Remaining.String())
+			}
 		}
 	}
 
-	if currentBytesUncompressed > currentBytes {
+	if currentBytesUncompressed > currentBytes && r.hasCompression {
 		lastBytesUncompressed := atomic.LoadInt64(&r.lastBytesUncompressed)
 		lastStatusTime := atomic.LoadInt64(&r.lastStatusTime)
 		now := time.Now().Unix()
@@ -158,6 +196,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
 	lines := 0
+	buf := make([]byte, 64*1024)
 
 	for s.Scan() {
 		lines++
@@ -175,7 +214,8 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 		if r.hasOptions {
 			if r.options.PrepareLine != nil {
-				line = r.options.PrepareLine(filename, lines, line)
+				buf = buf[:0]
+				line = r.options.PrepareLine(filename, lines, line, &buf)
 			}
 
 			if line == nil {
@@ -265,26 +305,32 @@ func (r *runner) shouldWrite(line []byte) bool {
 }
 
 func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
-	file, err := os.Open(filename) //nolint:gosec
-	if err != nil {
-		return err
+	var rd io.Reader
+
+	if filename == "-" {
+		rd = os.Stdin
+	} else {
+		file, err := os.Open(filename) //nolint:gosec
+		if err != nil {
+			return err
+		}
+
+		defer func() {
+			if clErr := file.Close(); clErr != nil && err == nil {
+				err = clErr
+			}
+		}()
+
+		rd = io.Reader(file)
 	}
 
-	defer func() {
-		if clErr := file.Close(); clErr != nil && err == nil {
-			err = clErr
-		}
-	}()
-
-	rd := io.Reader(file)
-
 	if !r.noProgress {
-		cr := progress.NewCountingReader(file)
+		cr := progress.NewCountingReader(rd)
 		cr.SetBytes(&r.currentBytes)
 		cr.SetLines(nil)
 
 		if r.parallel <= 1 {
-			cr = progress.NewCountingReader(file)
+			cr = progress.NewCountingReader(rd)
 			cr.SetLines(nil)
 			r.currentFile = cr
 			r.currentTotal = r.sizes[filename]
@@ -425,7 +471,8 @@ func (i *stringFlags) Set(value string) error {
 // Options allows behavior customisations.
 type Options struct {
 	// PrepareLine is invoked for every line, if result is nil, line is skipped.
-	PrepareLine func(filename string, lineNr int, line []byte) []byte
+	// You can use buf to avoid allocations for a result, and change its capacity if needed.
+	PrepareLine func(filename string, lineNr int, line []byte, buf *[]byte) []byte
 }
 
 // Main is the entry point for catp CLI tool.
@@ -436,14 +483,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	)
 
 	r := &runner{}
-
-	if len(options) > 0 {
-		r.hasOptions = true
-
-		for _, opt := range options {
-			opt(&r.options)
-		}
-	}
 
 	flag.Var(&pass, "pass", "filter matching, may contain multiple AND patterns separated by ^,\n"+
 		"if filter matches, line is passed to the output (unless filtered out by -skip)\n"+
@@ -476,7 +515,8 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		fmt.Println()
 		fmt.Println("catp prints contents of files to STDOUT or dir/file output, \n" +
 			"while printing current progress status to STDERR. \n" +
-			"It can decompress data from .gz and .zst files.")
+			"It can decompress data from .gz and .zst files.\n" +
+			"Use dash (-) as PATH to read STDIN.")
 		fmt.Println()
 		fmt.Println("Usage of catp:")
 		fmt.Println("catp [OPTIONS] PATH ...")
@@ -500,6 +540,14 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		startProfiling(*cpuProfile, *memProfile)
 
 		defer pprof.StopCPUProfile()
+	}
+
+	if len(options) > 0 {
+		r.hasOptions = true
+
+		for _, opt := range options {
+			opt(&r.options)
+		}
 	}
 
 	if *output != "" && r.outDir == "" { //nolint:nestif
@@ -597,33 +645,49 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 
 	var files []string
 
-	for _, f := range flag.Args() {
-		glob, err := filepath.Glob(f)
-		if err != nil {
-			return err
-		}
+	args := flag.Args()
 
-		for _, f := range glob {
-			alreadyThere := false
-
-			for _, e := range files {
-				if e == f {
-					alreadyThere = true
-
-					break
-				}
+	if len(args) == 1 && args[0] == "-" {
+		files = append(files, "-") // STDIN
+	} else {
+		for _, f := range args {
+			glob, err := filepath.Glob(f)
+			if err != nil {
+				return err
 			}
 
-			if !alreadyThere {
-				files = append(files, f)
+			for _, f := range glob {
+				alreadyThere := false
+
+				for _, e := range files {
+					if e == f {
+						alreadyThere = true
+
+						break
+					}
+				}
+
+				if !alreadyThere {
+					files = append(files, f)
+				}
 			}
 		}
 	}
 
 	for _, fn := range files {
+		if fn == "-" {
+			r.totalBytes = -1
+
+			continue
+		}
+
 		st, err := os.Stat(fn)
 		if err != nil {
 			return fmt.Errorf("failed to read file stats %s: %w", fn, err)
+		}
+
+		if strings.HasSuffix(fn, ".zst") || strings.HasSuffix(fn, ".gz") {
+			r.hasCompression = true
 		}
 
 		r.totalBytes += st.Size()
