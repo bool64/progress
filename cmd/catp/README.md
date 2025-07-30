@@ -23,6 +23,7 @@ catp dev, go1.22rc1 CGO_ZSTD
 catp prints contents of files to STDOUT or dir/file output,
 while printing current progress status to STDERR.
 It can decompress data from .gz and .zst files.
+Use dash (-) as PATH to read STDIN.
 
 Usage of catp:
 catp [OPTIONS] PATH ...
@@ -37,7 +38,7 @@ catp [OPTIONS] PATH ...
     	files will be written to out dir with original base names
     	disables output flag
   -output string
-    	output to file instead of STDOUT
+    	output to file (can have .gz or .zst ext for compression) instead of STDOUT
   -parallel int
     	number of parallel readers if multiple files are provided
     	lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)
