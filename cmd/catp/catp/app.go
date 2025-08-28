@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime/pprof"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -603,6 +604,8 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 			}
 		}
 	}
+
+	sort.Strings(files)
 
 	if *output != "" && r.outDir == "" { //nolint:nestif
 		fn := *output
