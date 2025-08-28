@@ -53,6 +53,8 @@ type runner struct {
 	// skip is a slice of OR items, that are slices of AND items.
 	skip [][][]byte
 
+	finalPass bool
+
 	currentFile  *progress.CountingReader
 	currentTotal int64
 
@@ -272,6 +274,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 func (r *runner) shouldWrite(line []byte) bool {
 	shouldWrite := false
+	passed := false
 
 	if len(r.pass) == 0 {
 		shouldWrite = true
@@ -289,6 +292,7 @@ func (r *runner) shouldWrite(line []byte) bool {
 
 			if orPassed {
 				shouldWrite = true
+				passed = true
 
 				break
 			}
@@ -297,6 +301,10 @@ func (r *runner) shouldWrite(line []byte) bool {
 
 	if !shouldWrite {
 		return shouldWrite
+	}
+
+	if passed && r.finalPass {
+		return true
 	}
 
 	for _, orFilter := range r.skip {
@@ -521,6 +529,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
+	flag.BoolVar(&r.finalPass, "final-pass", false, "don't check skip if pass was successful")
 	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
 	flag.BoolVar(&r.countLines, "l", false, "count lines")
 	flag.Float64Var(&r.rateLimit, "rate-limit", 0, "output rate limit lines per second")
