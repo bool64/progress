@@ -4,6 +4,7 @@ package catp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,6 +24,7 @@ import (
 	"github.com/bool64/progress"
 	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
+	"golang.org/x/time/rate"
 )
 
 var versionExtra []string
@@ -57,7 +59,11 @@ type runner struct {
 	lastStatusTime        int64
 	lastBytesUncompressed int64
 
+	rateLimit float64
+	limiter   *rate.Limiter
+
 	noProgress bool
+	countLines bool
 
 	hasOptions bool
 	options    Options
@@ -198,10 +204,19 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	lines := 0
 	buf := make([]byte, 64*1024)
 
+	linesPush := 1000
+	if r.rateLimit < 100 {
+		linesPush = 1
+	}
+
 	for s.Scan() {
 		lines++
 
-		if lines >= 1000 {
+		if r.limiter != nil {
+			_ = r.limiter.Wait(context.Background()) //nolint:errcheck // No failure condition here.
+		}
+
+		if lines >= linesPush {
 			atomic.AddInt64(&r.currentLines, int64(lines))
 			lines = 0
 		}
@@ -390,7 +405,11 @@ func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 		})
 	}
 
-	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 || r.hasOptions {
+	if r.rateLimit > 0 {
+		r.limiter = rate.NewLimiter(rate.Limit(r.rateLimit), 100)
+	}
+
+	if len(r.pass) > 0 || len(r.skip) > 0 || r.parallel > 1 || r.hasOptions || r.countLines || r.rateLimit > 0 {
 		r.scanFile(filename, rd, out)
 	} else {
 		r.readFile(rd, out)
@@ -502,6 +521,8 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
 	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
+	flag.BoolVar(&r.countLines, "l", false, "count lines")
+	flag.Float64Var(&r.rateLimit, "rate-limit", 0, "output rate limit lines per second")
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
 
