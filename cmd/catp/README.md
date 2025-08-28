@@ -11,52 +11,53 @@ go install github.com/bool64/progress/cmd/catp@latest
 or download from [releases](https://github.com/bool64/progress/releases).
 
 ```
-wget https://github.com/bool64/progress/releases/latest/download/linux_amd64.tar.gz && tar xf linux_amd64.tar.gz && rm linux_amd64.tar.gz
+wget https://github.com/bool64/progress/releases/latest/download/linux_amd64_static.tar.gz && tar xf linux_amd64_static.tar.gz && rm linux_amd64_static.tar.gz
 ./catp -version
 ```
 
 ## Usage
 
 ```
-catp dev, go1.22rc1 CGO_ZSTD
-
-catp prints contents of files to STDOUT or dir/file output,
-while printing current progress status to STDERR.
+catp prints contents of files to STDOUT or dir/file output, 
+while printing current progress status to STDERR. 
 It can decompress data from .gz and .zst files.
 Use dash (-) as PATH to read STDIN.
 
 Usage of catp:
 catp [OPTIONS] PATH ...
   -dbg-cpu-prof string
-    	write first 10 seconds of CPU profile to file
+        write first 10 seconds of CPU profile to file
   -dbg-mem-prof string
-    	write heap profile to file after 10 seconds
+        write heap profile to file after 10 seconds
+  -l    count lines
   -no-progress
-    	disable progress printing
+        disable progress printing
   -out-dir string
-    	output to directory instead of STDOUT
-    	files will be written to out dir with original base names
-    	disables output flag
+        output to directory instead of STDOUT
+        files will be written to out dir with original base names
+        disables output flag
   -output string
-    	output to file (can have .gz or .zst ext for compression) instead of STDOUT
+        output to file (can have .gz or .zst ext for compression) instead of STDOUT
   -parallel int
-    	number of parallel readers if multiple files are provided
-    	lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)
-    	use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
+        number of parallel readers if multiple files are provided
+        lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)
+        use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
   -pass value
-    	filter matching, may contain multiple AND patterns separated by ^,
-    	if filter matches, line is passed to the output (unless filtered out by -skip)
-    	each -pass value is added with OR logic,
-    	for example, you can use "-pass bar^baz -pass foo" to only keep lines that have (bar AND baz) OR foo
+        filter matching, may contain multiple AND patterns separated by ^,
+        if filter matches, line is passed to the output (unless filtered out by -skip)
+        each -pass value is added with OR logic,
+        for example, you can use "-pass bar^baz -pass foo" to only keep lines that have (bar AND baz) OR foo
   -progress-json string
-    	write current progress to a file
+        write current progress to a file
+  -rate-limit float
+        output rate limit lines per second
   -skip value
-    	filter matching, may contain multiple AND patterns separated by ^,
-    	if filter matches, line is removed from the output (even if it passed -pass)
-    	each -skip value is added with OR logic,
-    	for example, you can use "-skip quux^baz -skip fooO" to skip lines that have (quux AND baz) OR fooO
+        filter matching, may contain multiple AND patterns separated by ^,
+        if filter matches, line is removed from the output (even if it passed -pass)
+        each -skip value is added with OR logic,
+        for example, you can use "-skip quux^baz -skip fooO" to skip lines that have (quux AND baz) OR fooO
   -version
-    	print version and exit
+        print version and exit
 ```
 
 ## Examples

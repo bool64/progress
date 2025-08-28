@@ -42,3 +42,8 @@ BUILD_LDFLAGS=-s -w
 
 ## Run tests
 test: test-unit
+
+# Build statically linked binary in docker.
+docker-build-static:
+	docker run --platform linux/amd64 -v $(PWD):/code -w /code --rm golang:alpine /bin/sh -c 'apk add build-base && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build --ldflags "-linkmode external -extldflags=-static" -tags cgo_zstd -o ./bin/catp ./cmd/catp && ./bin/catp'
+	cd ./bin && tar zcvf ../linux_amd64_static.tar.gz *
