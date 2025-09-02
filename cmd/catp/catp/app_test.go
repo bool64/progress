@@ -10,9 +10,9 @@ import (
 func Test_Main(t *testing.T) {
 	os.Args = []string{
 		"catp",
+		"-skip", "dbg",
 		"-pass", "linux^64",
 		"-pass", "windows",
-		"-skip", "dbg",
 		"-output", "testdata/filtered.log",
 		"testdata/release-assets.yml",
 	}
