@@ -213,7 +213,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 		linesPush = 1
 	}
 
-	flusher, _ := out.(interface {
+	flusher, _ := out.(interface { //nolint:errcheck // nil is good enough.
 		Flush() error
 	})
 
@@ -374,9 +374,8 @@ func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 		if err != nil {
 			return err
 		}
-		defer func() {
-			println("closing file")
 
+		defer func() {
 			if clErr := w.Close(); clErr != nil && err == nil {
 				err = clErr
 			}
@@ -393,15 +392,15 @@ func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 					err = clErr
 				}
 			}()
-		} else {
+		} else if strings.HasSuffix(fn, ".zst") {
 			z, err := zstdWriter(w)
 			if err != nil {
 				return err
 			}
+
 			out = z
 
 			defer func() {
-				println("closing zstdWriter")
 				if clErr := z.Close(); clErr != nil && err == nil {
 					err = clErr
 				}

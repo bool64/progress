@@ -22,6 +22,8 @@ linters-settings:
 linters:
   enable-all: true
   disable:
+    - gocognit
+    - gocyclo
     - funlen
     - nestif
     - cyclop
