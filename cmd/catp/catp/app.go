@@ -10,11 +10,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
 	"sort"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/bool64/dev/version"
@@ -237,6 +239,16 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		r.totalBytes += st.Size()
 		r.sizes[fn] = st.Size()
 	}
+
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-shutdown
+
+		println("received signal, shutting down...")
+		atomic.StoreInt64(&r.closed, 1)
+	}()
 
 	if r.parallel >= 2 {
 		pr := r.pr
