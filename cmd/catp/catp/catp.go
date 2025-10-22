@@ -28,6 +28,8 @@ type runner struct {
 	mu     sync.Mutex
 	output io.Writer
 
+	closed int64
+
 	pr           *progress.Progress
 	progressJSON string
 
@@ -219,6 +221,10 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 	for s.Scan() {
 		lines++
+
+		if atomic.LoadInt64(&r.closed) > 0 {
+			break
+		}
 
 		if r.limiter != nil {
 			_ = r.limiter.Wait(context.Background()) //nolint:errcheck // No failure condition here.
