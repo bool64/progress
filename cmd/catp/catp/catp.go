@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,7 +70,6 @@ type (
 	filter struct {
 		pass bool // Skip is false.
 		and  [][]byte
-		ms   string
 	}
 	flagFunc func(v string) error
 )
@@ -503,4 +503,29 @@ type Options struct {
 	// PrepareLine is invoked for every line, if result is nil, line is skipped.
 	// You can use buf to avoid allocations for a result, and change its capacity if needed.
 	PrepareLine func(filename string, lineNr int, line []byte, buf *[]byte) []byte
+}
+
+func (r *runner) loadCSVFilter(fn string, pass bool) error {
+	f, err := os.Open(fn) //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("failed to open CSV file %s: %w", fn, err)
+	}
+
+	cr := csv.NewReader(f)
+
+	rows, err := cr.ReadAll()
+	if err != nil {
+		return fmt.Errorf("failed to read CSV file %s: %w", fn, err)
+	}
+
+	for _, row := range rows {
+		var and [][]byte
+		for _, v := range row {
+			and = append(and, []byte(v))
+		}
+
+		r.filters = append(r.filters, filter{pass: pass, and: and})
+	}
+
+	return nil
 }
