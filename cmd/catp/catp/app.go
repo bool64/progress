@@ -29,13 +29,18 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	r := &runner{}
 
 	flag.Var(flagFunc(func(v string) error {
-		r.filters = append(r.filters, filter{pass: true, ms: v, and: bytes.Split([]byte(v), []byte("^"))})
+		r.filters = append(r.filters, filter{pass: true, and: bytes.Split([]byte(v), []byte("^"))})
 
 		return nil
 	}), "pass", "filter matching, may contain multiple AND patterns separated by ^,\n"+
 		"if filter matches, line is passed to the output (may be filtered out by preceding -skip)\n"+
 		"other -pass values are evaluated if preceding pass/skip did not match,\n"+
 		"for example, you can use \"-pass bar^baz -pass foo -skip fo\" to only keep lines that have (bar AND baz) OR foo, but not fox")
+
+	flag.Var(flagFunc(func(v string) error {
+		return r.loadCSVFilter(v, true)
+	}), "pass-csv", "filter matching, loads pass params from CSV file,\n"+
+		"each line is treated as -pass, each column value is AND condition.")
 
 	flag.BoolFunc("pass-any", "finishes matching and gets the value even if previous -pass did not match,\n"+
 		"if previous -skip matched, the line would be skipped any way.", func(s string) error {
@@ -45,7 +50,12 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	})
 
 	flag.Var(flagFunc(func(v string) error {
-		r.filters = append(r.filters, filter{pass: false, ms: v, and: bytes.Split([]byte(v), []byte("^"))})
+		return r.loadCSVFilter(v, false)
+	}), "skip-csv", "filter matching, loads skip params from CSV file,\n"+
+		"each line is treated as -skip, each column value is AND condition.")
+
+	flag.Var(flagFunc(func(v string) error {
+		r.filters = append(r.filters, filter{pass: false, and: bytes.Split([]byte(v), []byte("^"))})
 
 		return nil
 	}), "skip", "filter matching, may contain multiple AND patterns separated by ^,\n"+
