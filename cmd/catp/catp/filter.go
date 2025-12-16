@@ -89,9 +89,30 @@ func (f *filters) shouldWrite(line []byte) bool {
 
 func (g *filterGroup) match(line []byte) bool {
 	if g.pre != nil {
-		if !g.pre.Contains(line) {
+		ids := g.pre.Match(line)
+		if len(ids) == 0 {
 			return false
 		}
+
+		for _, id := range ids {
+			or := g.ors[id]
+
+			andMatched := true
+
+			for _, and := range or {
+				if !bytes.Contains(line, and) {
+					andMatched = false
+
+					break
+				}
+			}
+
+			if andMatched {
+				return true
+			}
+		}
+
+		return false
 	}
 
 	for _, or := range g.ors {
@@ -123,8 +144,9 @@ func (g *filterGroup) buildIndex() {
 	}
 
 	indexItems := make([][]byte, 0, len(g.ors))
-	for _, or := range g.ors {
+	for i, or := range g.ors {
 		indexItems = append(indexItems, or[0])
+		g.ors[i] = or[1:]
 	}
 
 	g.pre = ahocorasick.NewMatcher(indexItems)
