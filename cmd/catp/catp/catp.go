@@ -2,7 +2,6 @@ package catp
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -45,7 +44,7 @@ type runner struct {
 	currentBytesUncompressed int64
 	currentLines             int64
 
-	filters []filter
+	filters filters
 
 	currentFile  *progress.CountingReader
 	currentTotal int64
@@ -66,13 +65,7 @@ type runner struct {
 	hasCompression bool
 }
 
-type (
-	filter struct {
-		pass bool // Skip is false.
-		and  [][]byte
-	}
-	flagFunc func(v string) error
-)
+type flagFunc func(v string) error
 
 func (f flagFunc) String() string         { return "" }
 func (f flagFunc) Set(value string) error { return f(value) }
@@ -172,7 +165,7 @@ func (r *runner) st(s progress.Status) string {
 		atomic.StoreInt64(&r.lastBytesUncompressed, currentBytesUncompressed)
 	}
 
-	if len(r.filters) > 0 || r.options.PrepareLine != nil {
+	if r.filters.isSet() || r.options.PrepareLine != nil {
 		m := atomic.LoadInt64(&r.matches)
 		pr.Matches = &m
 		res += fmt.Sprintf(", matches %d", m)
@@ -251,7 +244,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 		line := s.Bytes()
 
-		if !r.shouldWrite(line) {
+		if !r.filters.shouldWrite(line) {
 			continue
 		}
 
@@ -295,32 +288,6 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 		r.lastErr = err
 	}
-}
-
-func (r *runner) shouldWrite(line []byte) bool {
-	shouldWrite := true
-
-	for _, f := range r.filters {
-		if f.pass {
-			shouldWrite = false
-		}
-
-		andMatched := true
-
-		for _, andFilter := range f.and {
-			if !bytes.Contains(line, andFilter) {
-				andMatched = false
-
-				break
-			}
-		}
-
-		if andMatched {
-			return f.pass
-		}
-	}
-
-	return shouldWrite
 }
 
 func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
@@ -432,7 +399,7 @@ func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 		r.limiter = rate.NewLimiter(rate.Limit(r.rateLimit), 100)
 	}
 
-	if len(r.filters) > 0 || r.parallel > 1 || r.hasOptions || r.countLines || r.rateLimit > 0 {
+	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.rateLimit > 0 {
 		r.scanFile(filename, rd, out)
 	} else {
 		r.readFile(rd, out)
@@ -524,7 +491,7 @@ func (r *runner) loadCSVFilter(fn string, pass bool) error {
 			and = append(and, []byte(v))
 		}
 
-		r.filters = append(r.filters, filter{pass: pass, and: and})
+		r.filters.addFilter(pass, and...)
 	}
 
 	return nil
