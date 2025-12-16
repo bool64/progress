@@ -44,18 +44,26 @@ catp [OPTIONS] PATH ...
         use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU) (default 1)
   -pass value
         filter matching, may contain multiple AND patterns separated by ^,
-        if filter matches, line is passed to the output (unless filtered out by -skip)
-        each -pass value is added with OR logic,
-        for example, you can use "-pass bar^baz -pass foo" to only keep lines that have (bar AND baz) OR foo
+        if filter matches, line is passed to the output (may be filtered out by preceding -skip)
+        other -pass values are evaluated if preceding pass/skip did not match,
+        for example, you can use "-pass bar^baz -pass foo -skip fo" to only keep lines that have (bar AND baz) OR foo, but not fox
+  -pass-any
+        finishes matching and gets the value even if previous -pass did not match,
+        if previous -skip matched, the line would be skipped any way.
+  -pass-csv value
+        filter matching, loads pass params from CSV file,
+        each line is treated as -pass, each column value is AND condition.
   -progress-json string
         write current progress to a file
   -rate-limit float
         output rate limit lines per second
   -skip value
         filter matching, may contain multiple AND patterns separated by ^,
-        if filter matches, line is removed from the output (even if it passed -pass)
-        each -skip value is added with OR logic,
+        if filter matches, line is removed from the output (may be kept if it passed preceding -pass)
         for example, you can use "-skip quux^baz -skip fooO" to skip lines that have (quux AND baz) OR fooO
+  -skip-csv value
+        filter matching, loads skip params from CSV file,
+        each line is treated as -skip, each column value is AND condition.
   -version
         print version and exit
 ```
@@ -77,10 +85,10 @@ get-key.log: 100.0% bytes read, 1000000 lines processed, 8065.7 l/s, 41.8 MB/s, 
 ```
 
 Run log filtering (lines containing `foo bar` or `baz`) on multiple files in background (with `screen`) and output to a
-new file.
+new compressed file.
 
 ```
-screen -dmS foo12 ./catp -output ~/foo-2023-07-12.log -pass "foo bar" -pass "baz" /home/logs/server-2023-07-12*
+screen -dmS foo12 ./catp -output ~/foo-2023-07-12.log.zst -pass "foo bar" -pass "baz" /home/logs/server-2023-07-12*
 ```
 
 ```
@@ -100,3 +108,14 @@ all: 32.3% bytes read, /home/logs/server-2023-07-12-09-00.log_6.zst: 5.1% bytes 
 # detaching from screen with ctrl+a+d
 ```
 
+Filter based on large list of needles. Values from allow and block lists are loaded into high-performance
+[Aho Corasick](https://en.wikipedia.org/wiki/Aho%E2%80%93Corasick_algorithm) indexes. 
+
+```
+catp -pass-csv allowlist.csv -skip-csv blocklist.csv -pass-any -output filtered.log.zst source.log.zst
+```
+
+Each source line would follow the filtering pipeline:
+* if `allowlist.csv` has at least one row, all cells of which are present in the source line, source line gets into output
+* if not, but if `blocklist.csv` has at least one row, all cells of which are present in the source line, source line is skipped
+* if not, source line gets into output because of `-pass-any`
