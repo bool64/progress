@@ -22,6 +22,7 @@ linters-settings:
 linters:
   enable-all: true
   disable:
+    - testpackage
     - gocognit
     - gocyclo
     - funlen

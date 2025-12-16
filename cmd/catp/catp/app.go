@@ -29,7 +29,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	r := &runner{}
 
 	flag.Var(flagFunc(func(v string) error {
-		r.filters = append(r.filters, filter{pass: true, and: bytes.Split([]byte(v), []byte("^"))})
+		r.filters.addFilter(true, bytes.Split([]byte(v), []byte("^"))...)
 
 		return nil
 	}), "pass", "filter matching, may contain multiple AND patterns separated by ^,\n"+
@@ -44,7 +44,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 
 	flag.BoolFunc("pass-any", "finishes matching and gets the value even if previous -pass did not match,\n"+
 		"if previous -skip matched, the line would be skipped any way.", func(s string) error {
-		r.filters = append(r.filters, filter{pass: true})
+		r.filters.addPassAny()
 
 		return nil
 	})
@@ -55,7 +55,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		"each line is treated as -skip, each column value is AND condition.")
 
 	flag.Var(flagFunc(func(v string) error {
-		r.filters = append(r.filters, filter{pass: false, and: bytes.Split([]byte(v), []byte("^"))})
+		r.filters.addFilter(false, bytes.Split([]byte(v), []byte("^"))...)
 
 		return nil
 	}), "skip", "filter matching, may contain multiple AND patterns separated by ^,\n"+
@@ -93,6 +93,8 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	r.filters.buildIndex()
 
 	if *ver {
 		fmt.Println(version.Module("github.com/bool64/progress").Version)
