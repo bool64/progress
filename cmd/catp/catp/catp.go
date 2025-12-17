@@ -59,6 +59,9 @@ type runner struct {
 	noProgress bool
 	countLines bool
 
+	startLine int
+	endLine   int
+
 	hasOptions bool
 	options    Options
 
@@ -200,6 +203,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
+	fileLines := 0
 	lines := 0
 	buf := make([]byte, 64*1024)
 
@@ -213,7 +217,16 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	})
 
 	for s.Scan() {
+		fileLines++
 		lines++
+
+		if r.startLine > 0 && fileLines <= r.startLine {
+			continue
+		}
+
+		if r.endLine > 0 && fileLines > r.endLine {
+			break
+		}
 
 		if atomic.LoadInt64(&r.closed) > 0 {
 			break
@@ -397,6 +410,10 @@ func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 
 	if r.rateLimit > 0 {
 		r.limiter = rate.NewLimiter(rate.Limit(r.rateLimit), 100)
+	}
+
+	if r.startLine != 0 || r.endLine != 0 {
+		r.countLines = true
 	}
 
 	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.rateLimit > 0 {

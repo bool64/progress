@@ -79,6 +79,11 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		"files will be written to out dir with original base names\n"+
 		"disables output flag")
 
+	flag.IntVar(&r.startLine, "start-line", 0, "start printing lines from this line (inclusive),\n"+
+		"default is 0 (first line), each input file is counted separately")
+	flag.IntVar(&r.endLine, "end-line", 0, "stop printing lines at this line (exclusive),\n"+
+		"default is 0 (no limit), each input file is counted separately")
+
 	flag.Usage = func() {
 		fmt.Println("catp", version.Module("github.com/bool64/progress").Version+",",
 			version.Info().GoVersion, strings.Join(versionExtra, " "))
