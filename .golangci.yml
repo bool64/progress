@@ -5,6 +5,10 @@ run:
 linters:
   default: all
   disable:
+    - funlen
+    - gocyclo
+    - gocognit
+    - err113
     - embeddedstructfieldcheck
     - testpackage
     - noinlineerr

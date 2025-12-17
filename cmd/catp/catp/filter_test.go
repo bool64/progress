@@ -19,7 +19,7 @@ func TestFilter_Match(t *testing.T) {
 	}
 
 	for _, line := range bytes.Split(input, []byte("\n")) {
-		if f.shouldWrite(line) {
+		if _, ok := f.shouldWrite(line); ok {
 			println(string(line))
 		}
 	}

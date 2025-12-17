@@ -212,10 +212,6 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 		linesPush = 1
 	}
 
-	flusher, _ := out.(interface { //nolint:errcheck // nil is good enough.
-		Flush() error
-	})
-
 	for s.Scan() {
 		fileLines++
 		lines++
@@ -236,11 +232,21 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 			_ = r.limiter.Wait(context.Background()) //nolint:errcheck // No failure condition here.
 		}
 
+		line := s.Bytes()
+		w := out
+
+		save, shouldWrite := r.filters.shouldWrite(line)
+		if save != nil {
+			w = save
+		}
+
 		if lines >= linesPush {
 			atomic.AddInt64(&r.currentLines, int64(lines))
 			lines = 0
 
-			if flusher != nil {
+			if flusher, ok := w.(interface {
+				Flush() error
+			}); ok {
 				if r.parallel > 1 && r.outDir == "" {
 					r.mu.Lock()
 					if err := flusher.Flush(); err != nil {
@@ -255,9 +261,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 			}
 		}
 
-		line := s.Bytes()
-
-		if !r.filters.shouldWrite(line) {
+		if !shouldWrite {
 			continue
 		}
 
@@ -274,21 +278,23 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 		atomic.AddInt64(&r.matches, 1)
 
-		if r.parallel > 1 && r.outDir == "" {
+		synchronize := r.parallel > 1 && (r.outDir == "" || save != nil)
+
+		if synchronize {
 			r.mu.Lock()
 		}
 
-		if _, err := out.Write(append(line, '\n')); err != nil {
+		if _, err := w.Write(append(line, '\n')); err != nil {
 			r.lastErr = err
 
-			if r.parallel > 1 && r.outDir == "" {
+			if synchronize {
 				r.mu.Unlock()
 			}
 
 			return
 		}
 
-		if r.parallel > 1 && r.outDir == "" {
+		if synchronize {
 			r.mu.Unlock()
 		}
 	}
@@ -303,7 +309,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	}
 }
 
-func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
+func (r *runner) cat(filename string) (err error) {
 	var rd io.Reader
 
 	if filename == "-" {
@@ -356,42 +362,18 @@ func (r *runner) cat(filename string) (err error) { //nolint:gocyclo
 	if r.outDir != "" {
 		fn := r.outDir + "/" + path.Base(filename)
 
-		w, err := os.Create(fn) //nolint:gosec
+		w, closer, err := makeWriter(fn)
 		if err != nil {
 			return err
 		}
 
 		defer func() {
-			if clErr := w.Close(); clErr != nil && err == nil {
-				err = clErr
+			if err := closer(); err != nil {
+				log.Println("failed to close writer:", err.Error())
 			}
 		}()
 
 		out = w
-
-		if strings.HasSuffix(fn, ".gz") {
-			z := gzip.NewWriter(w)
-			out = z
-
-			defer func() {
-				if clErr := z.Close(); clErr != nil && err == nil {
-					err = clErr
-				}
-			}()
-		} else if strings.HasSuffix(fn, ".zst") {
-			z, err := zstdWriter(w)
-			if err != nil {
-				return err
-			}
-
-			out = z
-
-			defer func() {
-				if clErr := z.Close(); clErr != nil && err == nil {
-					err = clErr
-				}
-			}()
-		}
 	}
 
 	if r.parallel <= 1 && !r.noProgress {
@@ -487,6 +469,9 @@ type Options struct {
 	// PrepareLine is invoked for every line, if result is nil, line is skipped.
 	// You can use buf to avoid allocations for a result, and change its capacity if needed.
 	PrepareLine func(filename string, lineNr int, line []byte, buf *[]byte) []byte
+
+	// VersionLabel is added to version message.
+	VersionLabel string
 }
 
 func (r *runner) loadCSVFilter(fn string, pass bool) error {

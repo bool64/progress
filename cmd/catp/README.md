@@ -29,6 +29,9 @@ catp [OPTIONS] PATH ...
         write first 10 seconds of CPU profile to file
   -dbg-mem-prof string
         write heap profile to file after 10 seconds
+  -end-line int
+        stop printing lines at this line (exclusive),
+        default is 0 (no limit), each input file is counted separately
   -l    count lines
   -no-progress
         disable progress printing
@@ -57,6 +60,8 @@ catp [OPTIONS] PATH ...
         write current progress to a file
   -rate-limit float
         output rate limit lines per second
+  -save-matches value
+        save matches of previous filter group to file
   -skip value
         filter matching, may contain multiple AND patterns separated by ^,
         if filter matches, line is removed from the output (may be kept if it passed preceding -pass)
@@ -64,13 +69,16 @@ catp [OPTIONS] PATH ...
   -skip-csv value
         filter matching, loads skip params from CSV file,
         each line is treated as -skip, each column value is AND condition.
+  -start-line int
+        start printing lines from this line (inclusive),
+        default is 0 (first line), each input file is counted separately
   -version
         print version and exit
 ```
 
 ## Examples
 
-Feed a file into `jq` field extractor with progress printing.
+### Feed a file into `jq` field extractor with progress printing
 
 ```
 catp get-key.log | jq .context.callback.Data.Nonce > get-key.jq
@@ -84,11 +92,13 @@ get-key.log: 96.8% bytes read, 967819 lines processed, 8064.9 l/s, 41.8 MB/s, el
 get-key.log: 100.0% bytes read, 1000000 lines processed, 8065.7 l/s, 41.8 MB/s, elapsed 2m3.98s, remaining 0s
 ```
 
+### Parallel scan of multiple files
+
 Run log filtering (lines containing `foo bar` or `baz`) on multiple files in background (with `screen`) and output to a
 new compressed file.
 
 ```
-screen -dmS foo12 ./catp -output ~/foo-2023-07-12.log.zst -pass "foo bar" -pass "baz" /home/logs/server-2023-07-12*
+screen -dmS foo12 ./catp -parallel 20 -output ~/foo-2023-07-12.log.zst -pass "foo bar" -pass "baz" /home/logs/server-2023-07-12*
 ```
 
 ```
@@ -108,14 +118,31 @@ all: 32.3% bytes read, /home/logs/server-2023-07-12-09-00.log_6.zst: 5.1% bytes 
 # detaching from screen with ctrl+a+d
 ```
 
-Filter based on large list of needles. Values from allow and block lists are loaded into high-performance
-[Aho Corasick](https://en.wikipedia.org/wiki/Aho%E2%80%93Corasick_algorithm) indexes. 
+### Filter based on large list of needles
+
+Values from allow and block lists are loaded into high-performance
+[Aho Corasick](https://en.wikipedia.org/wiki/Aho%E2%80%93Corasick_algorithm) indexes.
 
 ```
 catp -pass-csv allowlist.csv -skip-csv blocklist.csv -pass-any -output filtered.log.zst source.log.zst
 ```
 
 Each source line would follow the filtering pipeline:
-* if `allowlist.csv` has at least one row, all cells of which are present in the source line, source line gets into output
-* if not, but if `blocklist.csv` has at least one row, all cells of which are present in the source line, source line is skipped
+
+* if `allowlist.csv` has at least one row, all cells of which are present in the source line, source line gets into
+  output
+* if not, but if `blocklist.csv` has at least one row, all cells of which are present in the source line, source line is
+  skipped
 * if not, source line gets into output because of `-pass-any`
+
+### Split matches into separate files
+
+```
+catp -pass foo -save-matches foo.log.zst -pass bar^baz -save-matches 2.gz -pass qux -pass quux -output other.log input.log 
+```
+
+Pipeline:
+* each line from `input.log` is being read
+* lines that contain `foo` are stored to `foo.log.zst`
+* lines that contain `bar` and `baz` (but not `foo` that was already matched) are stored to `2.gz`
+* lines that contain `qux` or `quux` are stored to `other.log`
