@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -21,12 +20,20 @@ import (
 
 	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
-	gzip "github.com/klauspost/pgzip"
 )
 
 // Main is the entry point for catp CLI tool.
 func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,gocyclo,maintidx
 	r := &runner{}
+
+	var closers []func() error
+	defer func() {
+		for _, closer := range closers {
+			if err := closer(); err != nil {
+				log.Printf("failed to close: %s\n", err.Error())
+			}
+		}
+	}()
 
 	flag.Var(flagFunc(func(v string) error {
 		r.filters.addFilter(true, bytes.Split([]byte(v), []byte("^"))...)
@@ -62,6 +69,17 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		"if filter matches, line is removed from the output (may be kept if it passed preceding -pass)\n"+
 		"for example, you can use \"-skip quux^baz -skip fooO\" to skip lines that have (quux AND baz) OR fooO")
 
+	flag.Var(flagFunc(func(v string) error {
+		w, closer, err := makeWriter(v)
+		if err != nil {
+			return err
+		}
+
+		closers = append(closers, closer)
+
+		return r.filters.saveTo(w)
+	}), "save-matches", "save matches of previous filter group to file")
+
 	flag.IntVar(&r.parallel, "parallel", 1, "number of parallel readers if multiple files are provided\n"+
 		"lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)\n"+
 		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
@@ -79,8 +97,13 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		"files will be written to out dir with original base names\n"+
 		"disables output flag")
 
+	flag.IntVar(&r.startLine, "start-line", 0, "start printing lines from this line (inclusive),\n"+
+		"default is 0 (first line), each input file is counted separately")
+	flag.IntVar(&r.endLine, "end-line", 0, "stop printing lines at this line (exclusive),\n"+
+		"default is 0 (no limit), each input file is counted separately")
+
 	flag.Usage = func() {
-		fmt.Println("catp", version.Module("github.com/bool64/progress").Version+",",
+		fmt.Println("catp", version.Module("github.com/bool64/progress").Version+r.options.VersionLabel+",",
 			version.Info().GoVersion, strings.Join(versionExtra, " "))
 		fmt.Println()
 		fmt.Println("catp prints contents of files to STDOUT or dir/file output, \n" +
@@ -94,20 +117,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	}
 	flag.Parse()
 
-	r.filters.buildIndex()
-
-	if *ver {
-		fmt.Println(version.Module("github.com/bool64/progress").Version)
-
-		return nil
-	}
-
-	if flag.NArg() == 0 {
-		flag.Usage()
-
-		return nil
-	}
-
 	if *cpuProfile != "" {
 		startProfiling(*cpuProfile, *memProfile)
 
@@ -120,6 +129,20 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		for _, opt := range options {
 			opt(&r.options)
 		}
+	}
+
+	r.filters.buildIndex()
+
+	if *ver {
+		fmt.Println(version.Module("github.com/bool64/progress").Version + r.options.VersionLabel)
+
+		return nil
+	}
+
+	if flag.NArg() == 0 {
+		flag.Usage()
+
+		return nil
 	}
 
 	var files []string
@@ -158,61 +181,21 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	sort.Strings(files)
 
 	if *output != "" && r.outDir == "" {
-		fn := *output
-
-		out, err := os.Create(fn) //nolint:gosec
+		w, closer, err := makeWriter(*output)
 		if err != nil {
-			return fmt.Errorf("failed to create output file %s: %w", fn, err)
+			return err
 		}
 
-		r.output = out
-		compCloser := io.Closer(io.NopCloser(nil))
-
-		switch {
-		case strings.HasSuffix(fn, ".gz"):
-			gw := gzip.NewWriter(r.output)
-			compCloser = gw
-
-			r.output = gw
-		case strings.HasSuffix(fn, ".zst"):
-			zw, err := zstdWriter(r.output)
-			if err != nil {
-				return fmt.Errorf("zstd new writer: %w", err)
-			}
-
-			compCloser = zw
-
-			r.output = zw
-		}
-
-		w := bufio.NewWriterSize(r.output, 64*1024)
 		r.output = w
 
-		defer func() {
-			if err := w.Flush(); err != nil {
-				log.Fatalf("failed to flush STDOUT buffer: %s", err)
-			}
-
-			if err := compCloser.Close(); err != nil {
-				log.Fatalf("failed to close compressor: %s", err)
-			}
-
-			if err := out.Close(); err != nil {
-				log.Fatalf("failed to close output file %s: %s", *output, err)
-			}
-		}()
+		closers = append(closers, closer)
 	} else {
 		if isStdin {
 			r.output = os.Stdout
 		} else {
 			w := bufio.NewWriterSize(os.Stdout, 64*1024)
 			r.output = w
-
-			defer func() {
-				if err := w.Flush(); err != nil {
-					log.Fatalf("failed to flush STDOUT buffer: %s", err)
-				}
-			}()
+			closers = append(closers, w.Flush)
 		}
 	}
 

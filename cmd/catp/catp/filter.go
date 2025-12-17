@@ -2,6 +2,8 @@ package catp
 
 import (
 	"bytes"
+	"errors"
+	"io"
 
 	"github.com/cloudflare/ahocorasick"
 )
@@ -15,6 +17,8 @@ type (
 		// Prefilter checks for match of the first element of any ors item.
 		// This first element is removed from and.
 		pre *ahocorasick.Matcher
+
+		save io.Writer
 	}
 	filters struct {
 		g []*filterGroup
@@ -45,6 +49,21 @@ func (f *filters) addPassAny() {
 	f.g = append(f.g, &filterGroup{pass: true})
 }
 
+func (f *filters) saveTo(writer io.Writer) error {
+	if len(f.g) == 0 {
+		return errors.New("no filters set")
+	}
+
+	g := f.g[len(f.g)-1]
+	if g.save != nil {
+		return errors.New("save already set")
+	}
+
+	g.save = writer
+
+	return nil
+}
+
 func (f *filters) addFilter(pass bool, and ...[]byte) {
 	if len(and) == 0 {
 		return
@@ -56,7 +75,7 @@ func (f *filters) addFilter(pass bool, and ...[]byte) {
 	if len(f.g) != 0 {
 		g = f.g[len(f.g)-1]
 
-		if g.pass != pass {
+		if g.pass != pass || g.save != nil {
 			g = &filterGroup{pass: pass}
 			f.g = append(f.g, g)
 		}
@@ -69,7 +88,7 @@ func (f *filters) addFilter(pass bool, and ...[]byte) {
 	g.ors = append(g.ors, and)
 }
 
-func (f *filters) shouldWrite(line []byte) bool {
+func (f *filters) shouldWrite(line []byte) (io.Writer, bool) {
 	shouldWrite := true
 
 	for _, g := range f.g {
@@ -80,11 +99,11 @@ func (f *filters) shouldWrite(line []byte) bool {
 		matched := g.match(line)
 
 		if matched {
-			return g.pass
+			return g.save, g.pass
 		}
 	}
 
-	return shouldWrite
+	return nil, shouldWrite
 }
 
 func (g *filterGroup) match(line []byte) bool {
