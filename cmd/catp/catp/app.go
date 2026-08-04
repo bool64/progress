@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -167,17 +168,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 			}
 
 			for _, f := range glob {
-				alreadyThere := false
-
-				for _, e := range files {
-					if e == f {
-						alreadyThere = true
-
-						break
-					}
-				}
-
-				if !alreadyThere {
+				if !slices.Contains(files, f) {
 					files = append(files, f)
 				}
 			}
@@ -284,8 +275,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		errs := make(chan error, r.parallel)
 
 		for _, fn := range files {
-			fn := fn
-
 			select {
 			case err := <-errs:
 				return err

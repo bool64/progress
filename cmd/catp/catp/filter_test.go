@@ -1,4 +1,4 @@
-package catp
+package catp //nolint:testpackage
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ func TestFilter_Match(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, line := range bytes.Split(input, []byte("\n")) {
+	for line := range bytes.SplitSeq(input, []byte("\n")) {
 		if _, ok := f.shouldWrite(line); ok {
 			println(string(line))
 		}

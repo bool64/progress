@@ -335,7 +335,7 @@ func (cr *sharedCounters) count(n int, p []byte, err error) {
 		return
 	}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if p[i] == '\n' {
 			cr.localLines++
 		}

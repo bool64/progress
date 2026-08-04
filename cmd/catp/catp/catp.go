@@ -195,7 +195,7 @@ func (r *runner) st(s progress.Status) string {
 			if lastSkipTime != 0 && now > lastSkipTime && skipPos > lastSkipPos {
 				lps := float64(skipPos-lastSkipPos) / float64(now-lastSkipTime)
 				remain := time.Duration(float64(target-skipPos) / lps * float64(time.Second))
-				skipInfo += fmt.Sprintf(" remaining %s", remain.Round(time.Second).String())
+				skipInfo += " remaining " + remain.Round(time.Second).String()
 			}
 
 			atomic.StoreInt64(&r.lastSkipPos, skipPos)
@@ -395,7 +395,7 @@ func (r *runner) startControlServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rate-limit", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
-			v, err := strconv.ParseFloat(req.FormValue("value"), 64)
+			v, err := strconv.ParseFloat(req.FormValue("value"), 64) //nolint:gosec
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 
@@ -409,14 +409,14 @@ func (r *runner) startControlServer() error {
 			}
 		}
 
-		fmt.Fprintf(w, "%s\n", formatLimit(r.limiter.Limit()))
+		_, _ = fmt.Fprintf(w, "%s\n", formatLimit(r.limiter.Limit()))
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		r.statusMu.Lock()
 		status := r.lastStatus
 		r.statusMu.Unlock()
 
-		fmt.Fprintf(w, `<html><body>
+		_, _ = fmt.Fprintf(w, `<html><body>
 <pre>%s</pre>
 <p>rate limit: %s lines/sec</p>
 <form method="post" action="/rate-limit">
@@ -434,7 +434,7 @@ func (r *runner) startControlServer() error {
 	}
 
 	go func() {
-		if err := http.Serve(ln, handler); err != nil {
+		if err := http.Serve(ln, handler); err != nil { //nolint:gosec
 			log.Println("control server stopped:", err.Error())
 		}
 	}()

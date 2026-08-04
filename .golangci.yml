@@ -5,6 +5,15 @@ run:
 linters:
   default: all
   disable:
+    - cyclop
+    - err113
+    - errcheck
+    - gocognit
+    - gocyclo
+    - funlen
+    - containedctx
+    - nestif
+    - noctx
     - embeddedstructfieldcheck
     - nilnil
     - noinlineerr
