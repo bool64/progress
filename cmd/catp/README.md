@@ -32,6 +32,12 @@ catp [OPTIONS] PATH ...
   -end-line int
         stop printing lines at this line (exclusive),
         default is 0 (no limit), each input file is counted separately
+  -http string
+        address to serve rate limit control interface on (e.g. :6060),
+        / shows a status page, GET /rate-limit reads the current limit,
+        POST /rate-limit?value=X sets a new one (0 or less means unlimited)
+  -http-auth string
+        user:pass to require as HTTP basic auth for -http endpoints
   -l    count lines
   -no-progress
         disable progress printing
@@ -134,6 +140,21 @@ Each source line would follow the filtering pipeline:
 * if not, but if `blocklist.csv` has at least one row, all cells of which are present in the source line, source line is
   skipped
 * if not, source line gets into output because of `-pass-any`
+
+### Control rate limit at runtime over HTTP
+
+Start unlimited (or with an initial `-rate-limit`), then throttle or resume from another terminal.
+
+```
+catp -http :6060 -http-auth admin:secret -rate-limit 1000 -output out.log input.log
+```
+
+```
+curl -u admin:secret http://localhost:6060/               # status page
+curl -u admin:secret http://localhost:6060/rate-limit      # read current limit
+curl -u admin:secret -X POST "http://localhost:6060/rate-limit?value=100"  # throttle down
+curl -u admin:secret -X POST "http://localhost:6060/rate-limit?value=0"    # unlimited
+```
 
 ### Split matches into separate files
 

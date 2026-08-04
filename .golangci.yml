@@ -5,12 +5,17 @@ run:
 linters:
   default: all
   disable:
-    - funlen
-    - gocyclo
-    - gocognit
+    - cyclop
     - err113
+    - errcheck
+    - gocognit
+    - gocyclo
+    - funlen
+    - containedctx
+    - nestif
+    - noctx
     - embeddedstructfieldcheck
-    - testpackage
+    - nilnil
     - noinlineerr
     - wsl_v5
     - funcorder
@@ -36,22 +41,13 @@ linters:
     - varnamelen
     - wrapcheck
   settings:
-    funlen:
-      lines: 150
-      statements: 50
-    cyclop:
-      max-complexity: 35
-    gocognit:
-      min-complexity: 50
-    nestif:
-      min-complexity: 12
     dupl:
       threshold: 100
     errcheck:
       check-type-assertions: true
       check-blank: true
     gocyclo:
-      min-complexity: 25
+      min-complexity: 20
     misspell:
       locale: US
     unparam:

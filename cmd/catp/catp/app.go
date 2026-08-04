@@ -4,6 +4,7 @@ package catp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/bool64/dev/version"
 	"github.com/bool64/progress"
+	"golang.org/x/time/rate"
 )
 
 // Main is the entry point for catp CLI tool.
@@ -90,6 +93,10 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
 	flag.BoolVar(&r.countLines, "l", false, "count lines")
 	flag.Float64Var(&r.rateLimit, "rate-limit", 0, "output rate limit lines per second")
+	flag.StringVar(&r.httpAddr, "http", "", "address to serve rate limit control interface on (e.g. :6060),\n"+
+		"/ shows a status page, GET /rate-limit reads the current limit,\n"+
+		"POST /rate-limit?value=X sets a new one (0 or less means unlimited)")
+	flag.StringVar(&r.httpAuth, "http-auth", "", "user:pass to require as HTTP basic auth for -http endpoints")
 	progressJSON := flag.String("progress-json", "", "write current progress to a file")
 	ver := flag.Bool("version", false, "print version and exit")
 
@@ -161,17 +168,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 			}
 
 			for _, f := range glob {
-				alreadyThere := false
-
-				for _, e := range files {
-					if e == f {
-						alreadyThere = true
-
-						break
-					}
-				}
-
-				if !alreadyThere {
+				if !slices.Contains(files, f) {
 					files = append(files, f)
 				}
 			}
@@ -235,6 +232,24 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		r.sizes[fn] = st.Size()
 	}
 
+	if r.rateLimit > 0 || r.httpAddr != "" {
+		lim := rate.Inf
+		if r.rateLimit > 0 {
+			lim = rate.Limit(r.rateLimit)
+		}
+
+		r.limiter = rate.NewLimiter(lim, 100)
+	}
+
+	if r.httpAddr != "" {
+		if err := r.startControlServer(); err != nil {
+			return err
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	r.ctx = ctx
+
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
@@ -243,6 +258,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 
 		println("received signal, shutting down...")
 		atomic.StoreInt64(&r.closed, 1)
+		cancel()
 	}()
 
 	if r.parallel >= 2 {
@@ -259,8 +275,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		errs := make(chan error, r.parallel)
 
 		for _, fn := range files {
-			fn := fn
-
 			select {
 			case err := <-errs:
 				return err

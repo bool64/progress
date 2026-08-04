@@ -3,14 +3,18 @@ package catp
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"path"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,6 +59,16 @@ type runner struct {
 
 	rateLimit float64
 	limiter   *rate.Limiter
+	httpAddr  string
+	httpAuth  string
+	ctx       context.Context
+
+	skipPos      int64
+	lastSkipPos  int64
+	lastSkipTime int64
+
+	statusMu   sync.Mutex
+	lastStatus string
 
 	noProgress bool
 	countLines bool
@@ -168,6 +182,29 @@ func (r *runner) st(s progress.Status) string {
 		atomic.StoreInt64(&r.lastBytesUncompressed, currentBytesUncompressed)
 	}
 
+	if r.parallel <= 1 && r.startLine > 0 {
+		target := int64(r.startLine)
+
+		if skipPos := atomic.LoadInt64(&r.skipPos); skipPos < target {
+			skipInfo := fmt.Sprintf(", skipped %.1f%%", 100*float64(skipPos)/float64(target))
+
+			lastSkipPos := atomic.LoadInt64(&r.lastSkipPos)
+			lastSkipTime := atomic.LoadInt64(&r.lastSkipTime)
+			now := time.Now().Unix()
+
+			if lastSkipTime != 0 && now > lastSkipTime && skipPos > lastSkipPos {
+				lps := float64(skipPos-lastSkipPos) / float64(now-lastSkipTime)
+				remain := time.Duration(float64(target-skipPos) / lps * float64(time.Second))
+				skipInfo += " remaining " + remain.Round(time.Second).String()
+			}
+
+			atomic.StoreInt64(&r.lastSkipPos, skipPos)
+			atomic.StoreInt64(&r.lastSkipTime, now)
+
+			res += skipInfo
+		}
+	}
+
 	if r.filters.isSet() || r.options.PrepareLine != nil {
 		m := atomic.LoadInt64(&r.matches)
 		pr.Matches = &m
@@ -187,6 +224,10 @@ func (r *runner) st(s progress.Status) string {
 		}
 	}
 
+	r.statusMu.Lock()
+	r.lastStatus = res
+	r.statusMu.Unlock()
+
 	return res
 }
 
@@ -199,24 +240,52 @@ func (r *runner) readFile(rd io.Reader, out io.Writer) {
 	}
 }
 
+// linesPush picks how many lines to batch before updating shared progress counters,
+// keeping a batch's fill time under the progress status interval so speed/remaining
+// estimates don't alias against a rate-limited throughput.
+func (r *runner) linesPush() int {
+	if r.limiter == nil {
+		return 1000
+	}
+
+	lim := r.limiter.Limit()
+	if lim == rate.Inf || lim > 1000 {
+		return 1000
+	}
+
+	if lim < 1 {
+		return 1
+	}
+
+	return int(lim)
+}
+
 func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
+
+	atomic.StoreInt64(&r.skipPos, 0)
+	atomic.StoreInt64(&r.lastSkipPos, 0)
+	atomic.StoreInt64(&r.lastSkipTime, 0)
 
 	fileLines := 0
 	lines := 0
 	buf := make([]byte, 64*1024)
 
-	linesPush := 1000
-	if r.rateLimit < 100 {
-		linesPush = 1
-	}
+	linesPush := r.linesPush()
 
 	for s.Scan() {
 		fileLines++
-		lines++
+
+		if atomic.LoadInt64(&r.closed) > 0 {
+			break
+		}
 
 		if r.startLine > 0 && fileLines <= r.startLine {
+			if fileLines&0xFFFF == 0 || fileLines == r.startLine {
+				atomic.StoreInt64(&r.skipPos, int64(fileLines))
+			}
+
 			continue
 		}
 
@@ -224,12 +293,10 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 			break
 		}
 
-		if atomic.LoadInt64(&r.closed) > 0 {
-			break
-		}
+		lines++
 
 		if r.limiter != nil {
-			_ = r.limiter.Wait(context.Background()) //nolint:errcheck // No failure condition here.
+			_ = r.limiter.Wait(r.ctx) //nolint:errcheck // No failure condition here.
 		}
 
 		line := s.Bytes()
@@ -243,6 +310,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 		if lines >= linesPush {
 			atomic.AddInt64(&r.currentLines, int64(lines))
 			lines = 0
+			linesPush = r.linesPush()
 
 			if flusher, ok := w.(interface {
 				Flush() error
@@ -307,6 +375,87 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 
 		r.lastErr = err
 	}
+}
+
+func formatLimit(lim rate.Limit) string {
+	if lim == rate.Inf {
+		return "unlimited"
+	}
+
+	return strconv.FormatFloat(float64(lim), 'f', -1, 64)
+}
+
+// startControlServer exposes GET/POST /rate-limit to inspect and change the rate limit at runtime.
+func (r *runner) startControlServer() error {
+	ln, err := net.Listen("tcp", r.httpAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", r.httpAddr, err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/rate-limit", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			v, err := strconv.ParseFloat(req.FormValue("value"), 64) //nolint:gosec
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+
+				return
+			}
+
+			if v <= 0 {
+				r.limiter.SetLimit(rate.Inf)
+			} else {
+				r.limiter.SetLimit(rate.Limit(v))
+			}
+		}
+
+		_, _ = fmt.Fprintf(w, "%s\n", formatLimit(r.limiter.Limit()))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		r.statusMu.Lock()
+		status := r.lastStatus
+		r.statusMu.Unlock()
+
+		_, _ = fmt.Fprintf(w, `<html><body>
+<pre>%s</pre>
+<p>rate limit: %s lines/sec</p>
+<form method="post" action="/rate-limit">
+<input name="value" placeholder="lines/sec, 0 or less = unlimited">
+<button type="submit">set</button>
+</form>
+</body></html>`, status, formatLimit(r.limiter.Limit()))
+	})
+
+	var handler http.Handler = mux
+
+	if r.httpAuth != "" {
+		user, pass, _ := strings.Cut(r.httpAuth, ":")
+		handler = basicAuth(user, pass, mux)
+	}
+
+	go func() {
+		if err := http.Serve(ln, handler); err != nil { //nolint:gosec
+			log.Println("control server stopped:", err.Error())
+		}
+	}()
+
+	return nil
+}
+
+func basicAuth(user, pass string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		u, p, ok := req.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="catp"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+
+			return
+		}
+
+		next.ServeHTTP(w, req)
+	})
 }
 
 func (r *runner) cat(filename string) (err error) {
@@ -390,15 +539,11 @@ func (r *runner) cat(filename string) (err error) {
 		})
 	}
 
-	if r.rateLimit > 0 {
-		r.limiter = rate.NewLimiter(rate.Limit(r.rateLimit), 100)
-	}
-
 	if r.startLine != 0 || r.endLine != 0 {
 		r.countLines = true
 	}
 
-	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.rateLimit > 0 {
+	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil {
 		r.scanFile(filename, rd, out)
 	} else {
 		r.readFile(rd, out)
