@@ -286,6 +286,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer, sampleBy
 	sampleTotal := 0
 	sampleTaken := 0
 	sampleSize := int64(0)
+
 	var sampleTarget int64
 
 	if sampleBytes != nil {

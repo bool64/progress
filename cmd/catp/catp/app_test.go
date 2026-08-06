@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +13,34 @@ import (
 
 	"github.com/bool64/progress/cmd/catp/catp"
 )
+
+// runCapturingStderr runs fn with os.Stderr redirected, returning whatever it wrote.
+func runCapturingStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := os.Stderr
+	os.Stderr = w
+
+	fnErr := fn()
+
+	os.Stderr = orig
+
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	captured, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return string(captured), fnErr
+}
 
 // resetFlags clears the global flag set so catp.Main can be invoked again within the same test binary.
 func resetFlags() {
@@ -84,7 +113,7 @@ func Test_Main_samples_seekable(t *testing.T) {
 
 	defer os.Remove(out) //nolint:errcheck
 
-	d, err := os.ReadFile(out) //nolint:gosec
+	d, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +143,7 @@ func Test_Main_samples_compressed(t *testing.T) {
 	const totalLines = 2000000
 
 	func() {
-		f, err := os.Create(gzPath) //nolint:gosec
+		f, err := os.Create(gzPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +188,7 @@ func Test_Main_samples_compressed(t *testing.T) {
 
 	defer os.Remove(out) //nolint:errcheck
 
-	d, err := os.ReadFile(out) //nolint:gosec
+	d, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,17 +237,16 @@ func Test_Main_samples_stdin(t *testing.T) {
 }
 
 // Test_Main_samples_filtered_uncompressed checks that -pass/-skip filters on an uncompressed
-// file steer -samples away from the instant byte-offset path (which can't honor filters) and
-// into the same full-scan gating used for compressed files, so only matching lines are sampled.
-// The fixture needs to clear progress.CountingReader's 100KB flush granularity (same reasoning
-// as Test_Main_samples_compressed), otherwise every sample would land on the last matching line.
+// file still use the seek-based sampler: it scans forward from each target offset only until a
+// line passing filters is found, then jumps to the next target - so only matching lines are
+// sampled, without falling back to a full scan.
 func Test_Main_samples_filtered_uncompressed(t *testing.T) {
 	srcPath := "testdata/samples-filtered-src.log"
 
 	const totalLines = 2000000
 
 	func() {
-		f, err := os.Create(srcPath) //nolint:gosec
+		f, err := os.Create(srcPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -256,13 +284,18 @@ func Test_Main_samples_filtered_uncompressed(t *testing.T) {
 		srcPath,
 	}
 
-	if err := catp.Main(); err != nil {
-		t.Fatal(err)
+	stderr, mainErr := runCapturingStderr(t, func() error { return catp.Main() })
+	if mainErr != nil {
+		t.Fatal(mainErr)
+	}
+
+	if strings.Contains(stderr, "full scan") {
+		t.Fatalf("expected the seek-based sampler to run, but got a full-scan warning: %q", stderr)
 	}
 
 	defer os.Remove(out) //nolint:errcheck
 
-	d, err := os.ReadFile(out) //nolint:gosec
+	d, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +344,7 @@ func Test_Main_samples_gap(t *testing.T) {
 	)
 
 	func() {
-		f, err := os.Create(srcPath) //nolint:gosec
+		f, err := os.Create(srcPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -349,13 +382,18 @@ func Test_Main_samples_gap(t *testing.T) {
 		srcPath,
 	}
 
-	if err := catp.Main(); err != nil {
-		t.Fatal(err)
+	stderr, mainErr := runCapturingStderr(t, func() error { return catp.Main() })
+	if mainErr != nil {
+		t.Fatal(mainErr)
+	}
+
+	if strings.Contains(stderr, "full scan") {
+		t.Fatalf("expected the seek-based sampler to run, but got a full-scan warning: %q", stderr)
 	}
 
 	defer os.Remove(out) //nolint:errcheck
 
-	d, err := os.ReadFile(out) //nolint:gosec
+	d, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
