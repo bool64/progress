@@ -75,6 +75,7 @@ type runner struct {
 
 	startLine int
 	endLine   int
+	samples   int
 
 	hasOptions bool
 	options    Options
@@ -260,7 +261,15 @@ func (r *runner) linesPush() int {
 	return int(lim)
 }
 
-func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
+// scanFile scans and filters lines from rd to out. When sampleBytes is non-nil, it additionally
+// gates writes to r.samples lines evenly spaced across *sampleBytes's range: a line is only
+// written once it already passes filters and bytes read so far cross sampleTarget, a plain
+// comparison checked on every candidate line. Only once a line actually clears that target is
+// the current bucket computed (via one division), so a stretch with no passing lines is simply
+// skipped - the line that finally clears a stale target jumps sampleTaken straight to the bucket
+// it landed in, instead of also grabbing the very next line to catch up on the buckets that had
+// no match.
+func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer, sampleBytes *int64) {
 	s := bufio.NewScanner(rd)
 	s.Buffer(make([]byte, 64*1024), 10*1024*1024)
 
@@ -273,6 +282,17 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 	buf := make([]byte, 64*1024)
 
 	linesPush := r.linesPush()
+
+	sampleTotal := 0
+	sampleTaken := 0
+	sampleSize := int64(0)
+
+	var sampleTarget int64
+
+	if sampleBytes != nil {
+		sampleTotal = r.samples
+		sampleSize = r.sizes[filename]
+	}
 
 	for s.Scan() {
 		fileLines++
@@ -305,6 +325,23 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer) {
 		save, shouldWrite := r.filters.shouldWrite(line)
 		if save != nil {
 			w = save
+		}
+
+		if shouldWrite && sampleBytes != nil {
+			switch {
+			case sampleTaken >= sampleTotal:
+				shouldWrite = false
+			case atomic.LoadInt64(sampleBytes) < sampleTarget:
+				shouldWrite = false
+			default:
+				bucket := sampleTotal - 1
+				if sampleSize > 0 {
+					bucket = min(int(atomic.LoadInt64(sampleBytes)*int64(sampleTotal)/sampleSize), sampleTotal-1)
+				}
+
+				sampleTaken = bucket + 1
+				sampleTarget = int64(sampleTaken) * sampleSize / int64(sampleTotal)
+			}
 		}
 
 		if lines >= linesPush {
@@ -459,6 +496,17 @@ func basicAuth(user, pass string, next http.Handler) http.Handler {
 }
 
 func (r *runner) cat(filename string) (err error) {
+	if r.samples > 0 {
+		handled, reason, err := r.trySampleSeekable(filename)
+		if handled {
+			return err
+		}
+
+		if _, err := fmt.Fprintf(os.Stderr, "%s: full scan is used to collect samples because %s\n", filename, reason); err != nil {
+			return err
+		}
+	}
+
 	var rd io.Reader
 
 	if filename == "-" {
@@ -476,6 +524,21 @@ func (r *runner) cat(filename string) (err error) {
 		}()
 
 		rd = io.Reader(file)
+	}
+
+	// sampleBytes tracks compressed bytes read for this file only, independent of the shared
+	// (and -no-progress-gated) progress counters below, so -samples can gate evenly spaced lines
+	// through a full scan regardless of -no-progress or -parallel.
+	var sampleBytes *int64
+
+	if r.samples > 0 {
+		sampleBytes = new(int64)
+
+		scr := progress.NewCountingReader(rd)
+		scr.SetBytes(sampleBytes)
+		scr.SetLines(nil)
+
+		rd = scr
 	}
 
 	if !r.noProgress {
@@ -543,8 +606,8 @@ func (r *runner) cat(filename string) (err error) {
 		r.countLines = true
 	}
 
-	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil {
-		r.scanFile(filename, rd, out)
+	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil || sampleBytes != nil {
+		r.scanFile(filename, rd, out, sampleBytes)
 	} else {
 		r.readFile(rd, out)
 	}

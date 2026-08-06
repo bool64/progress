@@ -109,6 +109,12 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	flag.IntVar(&r.endLine, "end-line", 0, "stop printing lines at this line (exclusive),\n"+
 		"default is 0 (no limit), each input file is counted separately")
 
+	flag.IntVar(&r.samples, "samples", 0, "collect N evenly distributed sample lines per file instead of full output\n"+
+		"for uncompressed files, this seeks by byte offset, scanning forward only until a line passing\n"+
+		"-pass/-skip filters is found (immediately, if no filters are set), giving near-instant access to huge files\n"+
+		"for compressed (.gz/.zst) files this requires a full scan, roughly gated by bytes read so far\n"+
+		"(precision isn't guaranteed in either case)")
+
 	flag.Usage = func() {
 		fmt.Println("catp", version.Module("github.com/bool64/progress").Version+r.options.VersionLabel+",",
 			version.Info().GoVersion, strings.Join(versionExtra, " "))
