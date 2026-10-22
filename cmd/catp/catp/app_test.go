@@ -465,7 +465,7 @@ func Test_Main_splitChunks(t *testing.T) {
 
 	var got strings.Builder
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		b, err := os.ReadFile(out + "/foo.log.chunk" + strconv.Itoa(i))
 		if err != nil {
 			t.Fatal(err)

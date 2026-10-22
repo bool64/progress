@@ -379,6 +379,7 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer, sampleBy
 				atomic.AddInt64(r.consumed, consumedLocal)
 				consumedLocal = 0
 			}
+
 			linesPush = r.linesPush()
 
 			if flusher, ok := w.(interface {
@@ -473,7 +474,7 @@ func (r *runner) addSample(s speedSample) {
 
 // speedJSON returns samples newer than ?since= as [ts, lines/s, MB/s] rows.
 func (r *runner) speedJSON(w http.ResponseWriter, req *http.Request) {
-	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64)
+	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64) //nolint:gosec
 	rows := [][]any{}
 
 	r.statusMu.Lock()

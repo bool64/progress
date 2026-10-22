@@ -2,6 +2,7 @@ package catp
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,7 +40,7 @@ func (r *runner) jobs(files []string) []job {
 
 		width := len(strconv.FormatInt(n-1, 10))
 
-		for i := int64(0); i < n; i++ {
+		for i := range n {
 			res = append(res, job{
 				name:  fmt.Sprintf("%s.chunk%0*d", fn, width, i),
 				chunk: &chunk{path: fn, start: size * i / n, end: size * (i + 1) / n},
@@ -79,7 +80,7 @@ func newChunkReader(f *os.File, start, end int64) (*chunkReader, error) {
 			b, err := cr.br.ReadSlice('\n')
 			pos += int64(len(b))
 
-			if err == bufio.ErrBufferFull {
+			if errors.Is(err, bufio.ErrBufferFull) {
 				continue
 			}
 
