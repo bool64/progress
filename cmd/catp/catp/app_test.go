@@ -427,3 +427,62 @@ func Test_Main_samples_gap(t *testing.T) {
 		prev = n
 	}
 }
+
+func Test_Main_splitChunks(t *testing.T) {
+	dir := t.TempDir()
+	src := dir + "/foo.log"
+
+	var sb strings.Builder
+
+	var want strings.Builder
+
+	for i := 0; sb.Len() < 5<<20; i++ {
+		line := "line " + strconv.Itoa(i) + strings.Repeat("x", i%97)
+		if i%7 == 0 {
+			line += " xyz"
+			want.WriteString(line + "\n")
+		}
+
+		sb.WriteString(line + "\n")
+	}
+
+	if err := os.WriteFile(src, []byte(sb.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := dir + "/out"
+	if err := os.Mkdir(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	resetFlags()
+
+	os.Args = []string{"catp", "-no-progress", "-split-chunks", "-parallel", "4", "-pass", "xyz", "-out-dir", out, src}
+
+	if err := catp.Main(); err != nil {
+		t.Fatal(err)
+	}
+
+	var got strings.Builder
+
+	for i := range 4 {
+		b, err := os.ReadFile(out + "/foo.log.chunk" + strconv.Itoa(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got.Write(b)
+	}
+
+	if got.String() != want.String() {
+		t.Fatalf("chunked output differs: got %d bytes, want %d", got.Len(), want.Len())
+	}
+
+	resetFlags()
+
+	os.Args = []string{"catp", "-split-chunks", "-start-line", "1", "-parallel", "2", src}
+
+	if err := catp.Main(); err == nil {
+		t.Fatal("expected incompatible flags error")
+	}
+}

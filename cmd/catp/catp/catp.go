@@ -7,12 +7,14 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 	"github.com/bool64/progress"
 	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
+	"github.com/vearutop/plot-go"
 	"golang.org/x/time/rate"
 )
 
@@ -48,6 +51,10 @@ type runner struct {
 	currentBytesUncompressed int64
 	currentLines             int64
 
+	// consumed counts uncompressed bytes of the current file passed through scanFile (nil if not tracked),
+	// it is more precise than bytes read by a buffered reader.
+	consumed *int64
+
 	filters filters
 
 	currentFile  *progress.CountingReader
@@ -69,6 +76,7 @@ type runner struct {
 
 	statusMu   sync.Mutex
 	lastStatus string
+	speed      []speedSample // Kept only with -http, for the status page charts.
 
 	noProgress bool
 	countLines bool
@@ -81,6 +89,8 @@ type runner struct {
 	options    Options
 
 	hasCompression bool
+
+	splitChunks bool
 }
 
 type flagFunc func(v string) error
@@ -215,7 +225,7 @@ func (r *runner) st(s progress.Status) string {
 	if r.progressJSON != "" {
 		pr.ElapsedSeconds = pr.Elapsed.Truncate(time.Second).Seconds()
 		pr.RemainingSeconds = pr.Remaining.Round(time.Second).Seconds()
-		pr.BytesCompleted = currentBytes
+		pr.BytesCompleted = s.BytesCompleted // The shared r.currentBytes is not fed with a single reader.
 		pr.BytesTotal = atomic.LoadInt64(&r.totalBytes)
 
 		if j, err := json.Marshal(pr); err == nil {
@@ -227,6 +237,11 @@ func (r *runner) st(s progress.Status) string {
 
 	r.statusMu.Lock()
 	r.lastStatus = res
+
+	if r.httpAddr != "" {
+		r.addSample(speedSample{ts: time.Now().Unix(), lps: s.SpeedLPS, mbps: s.SpeedMBPS})
+	}
+
 	r.statusMu.Unlock()
 
 	return res
@@ -241,10 +256,19 @@ func (r *runner) readFile(rd io.Reader, out io.Writer) {
 	}
 }
 
+// smallInputSize is the total input size below which progress is updated for every line.
+const smallInputSize = 10 << 20
+
 // linesPush picks how many lines to batch before updating shared progress counters,
 // keeping a batch's fill time under the progress status interval so speed/remaining
 // estimates don't alias against a rate-limited throughput.
 func (r *runner) linesPush() int {
+	// Small inputs are cheap to update per line and would otherwise show no progress for a long time.
+	// Compressed input may expand a lot and STDIN has unknown size (-1), those keep batching.
+	if total := atomic.LoadInt64(&r.totalBytes); total >= 0 && total < smallInputSize && !r.hasCompression {
+		return 1
+	}
+
 	if r.limiter == nil {
 		return 1000
 	}
@@ -294,8 +318,11 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer, sampleBy
 		sampleSize = r.sizes[filename]
 	}
 
+	var consumedLocal int64
+
 	for s.Scan() {
 		fileLines++
+		consumedLocal += int64(len(s.Bytes()) + 1)
 
 		if atomic.LoadInt64(&r.closed) > 0 {
 			break
@@ -347,6 +374,12 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer, sampleBy
 		if lines >= linesPush {
 			atomic.AddInt64(&r.currentLines, int64(lines))
 			lines = 0
+
+			if r.consumed != nil {
+				atomic.AddInt64(r.consumed, consumedLocal)
+				consumedLocal = 0
+			}
+
 			linesPush = r.linesPush()
 
 			if flusher, ok := w.(interface {
@@ -406,12 +439,65 @@ func (r *runner) scanFile(filename string, rd io.Reader, out io.Writer, sampleBy
 
 	atomic.AddInt64(&r.currentLines, int64(lines))
 
+	if r.consumed != nil {
+		atomic.AddInt64(r.consumed, consumedLocal)
+	}
+
 	if err := s.Err(); err != nil {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 
 		r.lastErr = err
 	}
+}
+
+const maxSamples = 7200
+
+type speedSample struct {
+	ts   int64
+	lps  float64
+	mbps float64
+}
+
+// addSample must be called with statusMu held, one sample per second is kept.
+func (r *runner) addSample(s speedSample) {
+	if n := len(r.speed); n > 0 && r.speed[n-1].ts >= s.ts {
+		return
+	}
+
+	if len(r.speed) >= maxSamples {
+		r.speed = append(r.speed[:0], r.speed[len(r.speed)/2:]...)
+	}
+
+	r.speed = append(r.speed, s)
+}
+
+// speedJSON returns samples newer than ?since= as [ts, lines/s, MB/s] rows.
+func (r *runner) speedJSON(w http.ResponseWriter, req *http.Request) {
+	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64) //nolint:gosec
+	rows := [][]any{}
+
+	r.statusMu.Lock()
+	for _, s := range r.speed {
+		if s.ts > since {
+			rows = append(rows, []any{s.ts, s.lps, s.mbps})
+		}
+	}
+	r.statusMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(rows) //nolint:errchkjson
+}
+
+var donePercent = regexp.MustCompile(`(\d+(?:\.\d+)?)% bytes read`)
+
+// pageTitle shows completion in the tab title.
+func pageTitle(status string) string {
+	if m := donePercent.FindStringSubmatch(status); m != nil {
+		return m[1] + "% catp"
+	}
+
+	return "catp"
 }
 
 func formatLimit(lim rate.Limit) string {
@@ -448,19 +534,68 @@ func (r *runner) startControlServer() error {
 
 		_, _ = fmt.Fprintf(w, "%s\n", formatLimit(r.limiter.Limit()))
 	})
+
+	mux.Handle("/plot/", http.StripPrefix("/plot/", plot.Handler()))
+	mux.HandleFunc("/speed.json", r.speedJSON)
+
+	if r.options.HTTPMux != nil {
+		r.options.HTTPMux(mux)
+	}
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		r.statusMu.Lock()
 		status := r.lastStatus
 		r.statusMu.Unlock()
 
-		_, _ = fmt.Fprintf(w, `<html><body>
-<pre>%s</pre>
-<p>rate limit: %s lines/sec</p>
+		if r.options.StatusPage != nil {
+			_, _ = io.WriteString(w, r.options.StatusPage(status, formatLimit(r.limiter.Limit())))
+
+			return
+		}
+
+		_, _ = fmt.Fprintf(w, `<!doctype html><meta charset=utf-8><title>%s</title>%s
+<body style="font-family:monospace">
+<pre id=progress>%s</pre>
+<p id=limit>rate limit: %s lines/sec</p>
 <form method="post" action="/rate-limit">
 <input name="value" placeholder="lines/sec, 0 or less = unlimited">
 <button type="submit">set</button>
 </form>
-</body></html>`, status, formatLimit(r.limiter.Limit()))
+<div id=lps style="display:none"></div>
+<div id=mbps></div>
+<script>
+// Poll the page and update only the read-only parts, so the form is never overwritten mid-edit.
+setInterval(async () => {
+  try {
+    const r = await fetch(location.href, {cache: 'no-store'});
+    if (!r.ok) return;
+    const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+    document.title = doc.title;
+    for (const id of ['progress', 'limit']) document.getElementById(id).innerHTML = doc.getElementById(id).innerHTML;
+  } catch (e) {}
+}, 1000);
+
+// Charts get new points in place, the first fetch draws them.
+let since = 0;
+const charts = [['lps', 'Lines per second', 1], ['mbps', 'MB per second', 2]];
+setInterval(async () => {
+  try {
+    const rows = await (await fetch('/speed.json?since=' + since, {cache: 'no-store'})).json();
+    if (!rows.length) return;
+    for (const [id, caption, col] of charts) {
+      const pts = rows.map(r => [r[0], r[col]]);
+      if (id === 'lps') {
+        if (!pts.some(p => p[1] > 0) && !since) continue;
+        document.getElementById(id).style.display = '';
+      }
+      if (!since) Plot.replace(id, {columns: ['time', caption], values: pts}, {time: true, caption: caption, height: 200});
+      else if (document.getElementById(id).style.display !== 'none') Plot.append(id, pts);
+    }
+    since = rows[rows.length - 1][0];
+  } catch (e) {}
+}, 1000);
+</script>
+</body>`, html.EscapeString(pageTitle(status)), plot.HeadTags("/plot/"), html.EscapeString(status), formatLimit(r.limiter.Limit()))
 	})
 
 	var handler http.Handler = mux
@@ -495,7 +630,13 @@ func basicAuth(user, pass string, next http.Handler) http.Handler {
 	})
 }
 
-func (r *runner) cat(filename string) (err error) {
+func (r *runner) cat(filename string) error {
+	return r.catChunk(filename, nil)
+}
+
+// catChunk processes a file, or a byte range of it if c is not nil, in which case filename is
+// the virtual name of the chunk.
+func (r *runner) catChunk(filename string, c *chunk) (err error) {
 	if r.samples > 0 {
 		handled, reason, err := r.trySampleSeekable(filename)
 		if handled {
@@ -512,7 +653,12 @@ func (r *runner) cat(filename string) (err error) {
 	if filename == "-" {
 		rd = os.Stdin
 	} else {
-		file, err := os.Open(filename) //nolint:gosec
+		path := filename
+		if c != nil {
+			path = c.path
+		}
+
+		file, err := os.Open(path) //nolint:gosec
 		if err != nil {
 			return err
 		}
@@ -524,6 +670,12 @@ func (r *runner) cat(filename string) (err error) {
 		}()
 
 		rd = io.Reader(file)
+
+		if c != nil {
+			if rd, err = newChunkReader(file, c.start, c.end); err != nil {
+				return err
+			}
+		}
 	}
 
 	// sampleBytes tracks compressed bytes read for this file only, independent of the shared
@@ -588,6 +740,10 @@ func (r *runner) cat(filename string) (err error) {
 		out = w
 	}
 
+	if r.parallel <= 1 && !r.noProgress && !r.hasCompression {
+		r.consumed = new(int64)
+	}
+
 	if r.parallel <= 1 && !r.noProgress {
 		r.pr.Start(func(t *progress.Task) {
 			t.TotalBytes = func() int64 {
@@ -595,7 +751,14 @@ func (r *runner) cat(filename string) (err error) {
 			}
 
 			t.CurrentBytes = r.currentFile.Bytes
-			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) }
+
+			// Counters of this file, Progress adds counters of previous files (Continue) on its own.
+			if consumed := r.consumed; consumed != nil {
+				t.CurrentBytes = func() int64 { return atomic.LoadInt64(consumed) }
+			}
+
+			linesBase := atomic.LoadInt64(&r.currentLines)
+			t.CurrentLines = func() int64 { return atomic.LoadInt64(&r.currentLines) - linesBase }
 			t.Task = filename
 			t.Continue = true
 			t.PrintOnStart = true
@@ -672,11 +835,18 @@ func startProfiling(cpuProfile string, memProfile string) {
 	}()
 }
 
-// Options allows behavior customisations.
+// Options allows behavior customizations.
 type Options struct {
 	// PrepareLine is invoked for every line, if result is nil, line is skipped.
 	// You can use buf to avoid allocations for a result, and change its capacity if needed.
 	PrepareLine func(filename string, lineNr int, line []byte, buf *[]byte) []byte
+
+	// HTTPMux registers extra routes on the -http control server.
+	HTTPMux func(mux *http.ServeMux)
+
+	// StatusPage replaces the -http status page, it receives plain text progress status (not HTML-escaped)
+	// and current rate limit, and returns a complete HTML page.
+	StatusPage func(status, rateLimit string) string
 
 	// VersionLabel is added to version message.
 	VersionLabel string

@@ -232,10 +232,15 @@ func (p *Progress) speedStatus(s *Status) {
 		}
 	}
 
-	if dc > 0 {
+	switch {
+	case dc > 0:
 		s.Remaining = time.Duration((100.0 - s.DonePercent) * float64(ela) / dc)
 		s.Remaining = s.Remaining.Truncate(time.Second)
-	} else {
+	case s.DonePercent > 0:
+		// No progress during this interval (coarse counters), fall back to the average since start.
+		s.Remaining = time.Duration(float64(100*s.Elapsed)/s.DonePercent) - s.Elapsed
+		s.Remaining = s.Remaining.Truncate(time.Second)
+	default:
 		s.Remaining = 0
 	}
 
