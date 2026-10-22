@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"slices"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -86,6 +85,12 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	flag.IntVar(&r.parallel, "parallel", 1, "number of parallel readers if multiple files are provided\n"+
 		"lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)\n"+
 		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
+
+	flag.BoolVar(&r.splitChunks, "split-chunks", false, "experimental: with -parallel N (N >= 2), split each uncompressed file (>= 1 MB per chunk)\n"+
+		"into up to N byte-range chunks processed in parallel as virtual files named file.chunkNN,\n"+
+		"(line order is lost in STDOUT/-output, with -out-dir each chunk goes to its own file, so concatenating them in name order restores the order),\n"+
+		"line numbers are per chunk, .gz and .zst files are not split,\n"+
+		"incompatible with -start-line, -end-line, -samples and STDIN")
 
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
@@ -181,7 +186,16 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		}
 	}
 
-	sort.Strings(files)
+	if r.splitChunks {
+		switch {
+		case r.parallel < 2:
+			return errors.New("-split-chunks requires -parallel 2 or more")
+		case r.startLine != 0 || r.endLine != 0 || r.samples != 0:
+			return errors.New("-split-chunks is incompatible with -start-line, -end-line and -samples")
+		case isStdin:
+			return errors.New("-split-chunks is incompatible with STDIN")
+		}
+	}
 
 	if *output != "" && r.outDir == "" {
 		w, closer, err := makeWriter(*output)
@@ -280,7 +294,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		sem := make(chan struct{}, r.parallel)
 		errs := make(chan error, r.parallel)
 
-		for _, fn := range files {
+		for _, j := range r.jobs(files) {
 			select {
 			case err := <-errs:
 				return err
@@ -292,8 +306,8 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 					<-sem
 				}()
 
-				if err := r.cat(fn); err != nil {
-					errs <- fmt.Errorf("%s: %w", fn, err)
+				if err := r.catChunk(j.name, j.chunk); err != nil {
+					errs <- fmt.Errorf("%s: %w", j.name, err)
 				}
 			}()
 		}
