@@ -95,6 +95,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	cpuProfile := flag.String("dbg-cpu-prof", "", "write first 10 seconds of CPU profile to file")
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
+	flag.BoolVar(&r.progressInPlace, "i", false, "rewrite progress line in place (terminal only)")
 	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
 	flag.BoolVar(&r.countLines, "l", false, "count lines")
 	flag.Float64Var(&r.rateLimit, "rate-limit", 0, "output rate limit lines per second")
@@ -228,9 +229,10 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 				return
 			}
 
-			println(s)
+			r.pr.Println(s)
 		},
 	}
+	r.pr.InPlace = r.progressInPlace
 
 	for _, fn := range files {
 		if fn == "-" {
