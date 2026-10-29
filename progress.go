@@ -4,6 +4,7 @@ package progress
 import (
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,9 @@ type Progress struct {
 
 	// IncrementalSpeed shows speed and remaining estimate based on performance between two status updates.
 	IncrementalSpeed bool
+
+	// InPlace rewrites the status line in place instead of appending lines, only effective if stderr is a terminal.
+	InPlace bool
 
 	done    chan bool
 	task    Task
@@ -150,7 +154,7 @@ func (p *Progress) Start(options ...func(t *Task)) {
 	p.prnt = p.Print
 	if p.prnt == nil {
 		p.prnt = func(s Status) {
-			println(DefaultStatus(s))
+			p.Println(DefaultStatus(s))
 		}
 	}
 
@@ -266,9 +270,34 @@ func (p *Progress) printStatus(last bool) {
 	}
 }
 
+// Println prints a status line to stderr, honoring InPlace.
+func (p *Progress) Println(s string) {
+	if p.inPlace() {
+		print("\r" + s + "\033[K") // \033[K erases leftovers of a longer previous line.
+
+		return
+	}
+
+	println(s)
+}
+
+func (p *Progress) inPlace() bool {
+	if !p.InPlace {
+		return false
+	}
+
+	st, err := os.Stderr.Stat()
+
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
 // Stop stops progress reporting.
 func (p *Progress) Stop() {
 	p.printStatus(true)
+
+	if p.inPlace() {
+		println() // Keep the final status and move to a fresh line.
+	}
 
 	if !p.task.Continue {
 		p.metrics = nil

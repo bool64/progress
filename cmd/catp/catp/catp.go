@@ -78,8 +78,9 @@ type runner struct {
 	lastStatus string
 	speed      []speedSample // Kept only with -http, for the status page charts.
 
-	noProgress bool
-	countLines bool
+	noProgress      bool
+	progressInPlace bool
+	countLines      bool
 
 	startLine int
 	endLine   int

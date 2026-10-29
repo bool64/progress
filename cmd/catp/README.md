@@ -38,6 +38,7 @@ catp [OPTIONS] PATH ...
         POST /rate-limit?value=X sets a new one (0 or less means unlimited)
   -http-auth string
         user:pass to require as HTTP basic auth for -http endpoints
+  -i    rewrite progress line in place (terminal only)
   -l    count lines
   -no-progress
         disable progress printing
