@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/bool64/progress"
-	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
 	"github.com/vearutop/plot-go"
 	"golang.org/x/time/rate"
@@ -795,14 +794,8 @@ func (r *runner) openReader(rd io.Reader, filename string) (io.Reader, error) {
 			return nil, fmt.Errorf("failed to init gzip reader: %w", err)
 		}
 	case strings.HasSuffix(filename, ".zst"):
-		if r.parallel >= 1 {
-			if rd, err = zstdReader(rd); err != nil {
-				return nil, fmt.Errorf("failed to init zst reader: %w", err)
-			}
-		} else {
-			if rd, err = zstd.NewReader(rd); err != nil {
-				return nil, fmt.Errorf("failed to init zst reader: %w", err)
-			}
+		if rd, err = zstdReader(rd, r.parallel); err != nil {
+			return nil, fmt.Errorf("failed to init zst reader: %w", err)
 		}
 	}
 

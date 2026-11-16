@@ -84,7 +84,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 
 	flag.IntVar(&r.parallel, "parallel", 1, "number of parallel readers if multiple files are provided\n"+
 		"lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)\n"+
-		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
+		"use 0 for a 2-block pipelined zst decoder (slightly faster at cost of more CPU)")
 
 	flag.BoolVar(&r.splitChunks, "split-chunks", false, "experimental: with -parallel N (N >= 2), split each uncompressed file (>= 1 MB per chunk)\n"+
 		"into up to N byte-range chunks processed in parallel as virtual files named file.chunkNN,\n"+
@@ -96,7 +96,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
 	flag.BoolVar(&r.progressInPlace, "i", false, "rewrite progress line in place (terminal only)")
-	flag.BoolVar(&expZstd, "exp-zstd", false, "experimental: use github.com/vearutop/zstd-go for .zst (de)compression, also enabled by CATP_EXP_ZSTD=1 env var")
 	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
 	flag.BoolVar(&r.countLines, "l", false, "count lines")
 	flag.Float64Var(&r.rateLimit, "rate-limit", 0, "output rate limit lines per second")
@@ -136,10 +135,6 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-
-	if os.Getenv("CATP_EXP_ZSTD") == "1" {
-		expZstd = true
-	}
 
 	if *cpuProfile != "" {
 		startProfiling(*cpuProfile, *memProfile)

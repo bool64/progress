@@ -5,19 +5,20 @@ package catp
 import (
 	"io"
 
-	"github.com/DataDog/zstd"
+	zstd "github.com/vearutop/zstd-go/libzstd"
 )
 
 func init() {
 	versionExtra = append(versionExtra, "CGO_ZSTD")
 }
 
-func zstdReader(rd io.Reader) (io.Reader, error) {
+func zstdReader(rd io.Reader, _ int) (io.Reader, error) {
 	return zstd.NewReader(rd), nil
 }
 
 func zstdWriter(w io.Writer) (io.WriteCloser, error) {
-	return zstd.NewWriterLevel(w, zstd.BestSpeed), nil
+	return zstd.NewWriter(w, zstd.ProfileFastest(), func(w *zstd.Writer) {
+		w.FrameSize = 16 << 20
+		w.Seekable = true
+	}), nil
 }
-
-var expZstd bool // ponytail: no-op with cgo_zstd, flag kept so -exp-zstd parses.

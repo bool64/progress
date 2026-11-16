@@ -1,5 +1,3 @@
-github.com/DataDog/zstd v1.5.7 h1:ybO8RBeh29qrxIhCA9E8gKY6xfONU9T6G6aP9DTKfLE=
-github.com/DataDog/zstd v1.5.7/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
 github.com/andybalholm/brotli v1.1.1 h1:PR2pgnyFznKEugtsUo0xLdDop5SKXd5Qf5ysW+7XdTA=
 github.com/andybalholm/brotli v1.1.1/go.mod h1:05ib4cKhjx3OQYUY22hTVd34Bc8upXjOLL2rKwwZBoA=
 github.com/bool64/dev v0.2.46 h1:oOM68buCVIZBJscLMEHfalYW/SOPfABr5grztbwBa3w=
@@ -18,8 +16,8 @@ github.com/vearutop/plot-go v0.1.1 h1:TU9XyjsA6zbanlpjNS/Hq80HZNao4kJAfr1k+z9k3f
 github.com/vearutop/plot-go v0.1.1/go.mod h1:u/PnA1M0q8hVeruxfyF9rgqlOdU+BT7z1L20OARhgTY=
 github.com/vearutop/statigz v1.5.0 h1:FuWwZiT82yBw4xbWdWIawiP2XFTyEPhIo8upRxiKLqk=
 github.com/vearutop/statigz v1.5.0/go.mod h1:oHmjFf3izfCO804Di1ZjB666P3fAlVzJEx2k6jNt/Gk=
-github.com/vearutop/zstd-go v0.0.3 h1:JY3e2PcLo+4/Ll7yvPoyOm126tzAN0hfS/uquK2qR9g=
-github.com/vearutop/zstd-go v0.0.3/go.mod h1:1Gji1pmd5yWRZ+pSBC6E0/RJtJMh/afR4f8S4zFA/2E=
+github.com/vearutop/zstd-go v0.0.4 h1:zrOEyqX4EcpivgpdaR69SSPGXcmUHWKvD2V/zEuGZ24=
+github.com/vearutop/zstd-go v0.0.4/go.mod h1:1Gji1pmd5yWRZ+pSBC6E0/RJtJMh/afR4f8S4zFA/2E=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 golang.org/x/time v0.16.0 h1:vMb6ptszcQMkcwiRTAuNNU50gom6++Q/6gY2hDM6VDE=
