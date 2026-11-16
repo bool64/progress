@@ -817,7 +817,7 @@ func startProfiling(cpuProfile string, memProfile string) {
 	}
 
 	go func() {
-		time.Sleep(10 * time.Second)
+		time.Sleep(30 * time.Second)
 		pprof.StopCPUProfile()
 		println("CPU profile written to", cpuProfile)
 

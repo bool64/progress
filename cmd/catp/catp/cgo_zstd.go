@@ -19,3 +19,5 @@ func zstdReader(rd io.Reader) (io.Reader, error) {
 func zstdWriter(w io.Writer) (io.WriteCloser, error) {
 	return zstd.NewWriterLevel(w, zstd.BestSpeed), nil
 }
+
+var expZstd bool // ponytail: no-op with cgo_zstd, flag kept so -exp-zstd parses.

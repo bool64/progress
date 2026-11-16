@@ -96,6 +96,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 	memProfile := flag.String("dbg-mem-prof", "", "write heap profile to file after 10 seconds")
 	output := flag.String("output", "", "output to file (can have .gz or .zst ext for compression) instead of STDOUT")
 	flag.BoolVar(&r.progressInPlace, "i", false, "rewrite progress line in place (terminal only)")
+	flag.BoolVar(&expZstd, "exp-zstd", false, "experimental: use github.com/vearutop/zstd-go for .zst (de)compression, also enabled by CATP_EXP_ZSTD=1 env var")
 	flag.BoolVar(&r.noProgress, "no-progress", false, "disable progress printing")
 	flag.BoolVar(&r.countLines, "l", false, "count lines")
 	flag.Float64Var(&r.rateLimit, "rate-limit", 0, "output rate limit lines per second")
@@ -135,6 +136,10 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if os.Getenv("CATP_EXP_ZSTD") == "1" {
+		expZstd = true
+	}
 
 	if *cpuProfile != "" {
 		startProfiling(*cpuProfile, *memProfile)
