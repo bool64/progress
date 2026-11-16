@@ -475,7 +475,7 @@ func (r *runner) addSample(s speedSample) {
 
 // speedJSON returns samples newer than ?since= as [ts, lines/s, MB/s] rows.
 func (r *runner) speedJSON(w http.ResponseWriter, req *http.Request) {
-	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64) //nolint:gosec
+	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64)
 	rows := [][]any{}
 
 	r.statusMu.Lock()
@@ -519,7 +519,7 @@ func (r *runner) startControlServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rate-limit", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
-			v, err := strconv.ParseFloat(req.FormValue("value"), 64) //nolint:gosec
+			v, err := strconv.ParseFloat(req.FormValue("value"), 64)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 
@@ -741,7 +741,14 @@ func (r *runner) catChunk(filename string, c *chunk) (err error) {
 		out = w
 	}
 
-	if r.parallel <= 1 && !r.noProgress && !r.hasCompression {
+	if r.startLine != 0 || r.endLine != 0 {
+		r.countLines = true
+	}
+
+	useScan := r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil || sampleBytes != nil
+
+	// consumed is only maintained by scanFile; readFile relies on the counting reader.
+	if r.parallel <= 1 && !r.noProgress && !r.hasCompression && useScan {
 		r.consumed = new(int64)
 	}
 
@@ -766,11 +773,7 @@ func (r *runner) catChunk(filename string, c *chunk) (err error) {
 		})
 	}
 
-	if r.startLine != 0 || r.endLine != 0 {
-		r.countLines = true
-	}
-
-	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil || sampleBytes != nil {
+	if useScan {
 		r.scanFile(filename, rd, out, sampleBytes)
 	} else {
 		r.readFile(rd, out)
