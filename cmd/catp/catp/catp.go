@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/bool64/progress"
-	"github.com/klauspost/compress/zstd"
 	gzip "github.com/klauspost/pgzip"
 	"github.com/vearutop/plot-go"
 	"golang.org/x/time/rate"
@@ -475,7 +474,7 @@ func (r *runner) addSample(s speedSample) {
 
 // speedJSON returns samples newer than ?since= as [ts, lines/s, MB/s] rows.
 func (r *runner) speedJSON(w http.ResponseWriter, req *http.Request) {
-	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64) //nolint:gosec
+	since, _ := strconv.ParseInt(req.FormValue("since"), 10, 64)
 	rows := [][]any{}
 
 	r.statusMu.Lock()
@@ -519,7 +518,7 @@ func (r *runner) startControlServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rate-limit", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
-			v, err := strconv.ParseFloat(req.FormValue("value"), 64) //nolint:gosec
+			v, err := strconv.ParseFloat(req.FormValue("value"), 64)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 
@@ -741,7 +740,14 @@ func (r *runner) catChunk(filename string, c *chunk) (err error) {
 		out = w
 	}
 
-	if r.parallel <= 1 && !r.noProgress && !r.hasCompression {
+	if r.startLine != 0 || r.endLine != 0 {
+		r.countLines = true
+	}
+
+	useScan := r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil || sampleBytes != nil
+
+	// consumed is only maintained by scanFile; readFile relies on the counting reader.
+	if r.parallel <= 1 && !r.noProgress && !r.hasCompression && useScan {
 		r.consumed = new(int64)
 	}
 
@@ -766,11 +772,7 @@ func (r *runner) catChunk(filename string, c *chunk) (err error) {
 		})
 	}
 
-	if r.startLine != 0 || r.endLine != 0 {
-		r.countLines = true
-	}
-
-	if r.filters.isSet() || r.parallel > 1 || r.hasOptions || r.countLines || r.limiter != nil || sampleBytes != nil {
+	if useScan {
 		r.scanFile(filename, rd, out, sampleBytes)
 	} else {
 		r.readFile(rd, out)
@@ -792,14 +794,8 @@ func (r *runner) openReader(rd io.Reader, filename string) (io.Reader, error) {
 			return nil, fmt.Errorf("failed to init gzip reader: %w", err)
 		}
 	case strings.HasSuffix(filename, ".zst"):
-		if r.parallel >= 1 {
-			if rd, err = zstdReader(rd); err != nil {
-				return nil, fmt.Errorf("failed to init zst reader: %w", err)
-			}
-		} else {
-			if rd, err = zstd.NewReader(rd); err != nil {
-				return nil, fmt.Errorf("failed to init zst reader: %w", err)
-			}
+		if rd, err = zstdReader(rd, r.parallel); err != nil {
+			return nil, fmt.Errorf("failed to init zst reader: %w", err)
 		}
 	}
 
@@ -817,7 +813,7 @@ func startProfiling(cpuProfile string, memProfile string) {
 	}
 
 	go func() {
-		time.Sleep(10 * time.Second)
+		time.Sleep(30 * time.Second)
 		pprof.StopCPUProfile()
 		println("CPU profile written to", cpuProfile)
 

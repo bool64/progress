@@ -84,7 +84,7 @@ func Main(options ...func(o *Options)) error { //nolint:funlen,cyclop,gocognit,g
 
 	flag.IntVar(&r.parallel, "parallel", 1, "number of parallel readers if multiple files are provided\n"+
 		"lines from different files will go to output simultaneously (out of order of files, but in order of lines in each file)\n"+
-		"use 0 for multi-threaded zst decoder (slightly faster at cost of more CPU)")
+		"use 0 for a 2-block pipelined zst decoder (slightly faster at cost of more CPU)")
 
 	flag.BoolVar(&r.splitChunks, "split-chunks", false, "experimental: with -parallel N (N >= 2), split each uncompressed file (>= 1 MB per chunk)\n"+
 		"into up to N byte-range chunks processed in parallel as virtual files named file.chunkNN,\n"+
